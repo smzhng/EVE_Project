@@ -1,5 +1,5 @@
 # EVE Project 🤖
-** EVE from Wall-E on Raspberry Pi**
+EVE from Wall-E on Raspberry Pi
 
 This project transforms a Raspberry Pi into a fully interactive real-life clone of EVE from the movie Wall-E, with personality that matches the iconic character. This project uses a LLM to generate responses to user input and converts phrases into audible speech, while simultaneoulsy displaying face animations.
 
@@ -11,7 +11,7 @@ This project transforms a Raspberry Pi into a fully interactive real-life clone 
 * **Vision Capable**: Can "see" and respond to the world using a Raspberry Pi Camera Module 3 and the **Moondream** vision module
 
 ## Hardware 🛠️
-* ** Raspberry Pi 5 4GB RAM**
+* Raspberry Pi 5 4GB RAM
 * USB Microphone & Speaker
 * Two Oled Screens
 * Raspberry Pi Camera Module 3
