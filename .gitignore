@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Large files for project
+tts/en_US-libritts_r-medium.onnx
+tts/en_US-libritts_r-medium.onnx.json
+stt/vosk-model-small-en-us-0.15
