@@ -162,36 +162,49 @@ def generate_LLM_response(user_text_input):
 
 
 def record_audio(output_path, duration=RECORD_DURATION, sample_rate=16000, device=MIC_DEVICE):
-    """
-    Records from mic and saves as 16kHz mono wav — ready for Vosk, no conversion needed.
-    Input:  output_path (str) — where to save the recording
-    Output: output_path (str) — same path, for chaining
-    """
+    
     def countdown():
         for i in range(duration, 0, -1):
             print(f"{i}...")
             time.sleep(1)
 
     print(f"Recording for {duration} seconds... speak now!")
-
     timer_thread = threading.Thread(target=countdown)
     timer_thread.start()
 
-    native_rate = 44100
-    audio = sd.rec(
-        int(duration * native_rate),
-        samplerate=native_rate,
-        channels=1,
-        dtype='int16',
-        device=device
-    )
-    sd.wait()
+    # get the mic's actual native sample rate
+    device_info = sd.query_devices(device)
+    native_rate = int(device_info['default_samplerate'])
 
-    # downsample from 44100 to 16000 for Vosk
-    audio = audio[::int(native_rate / sample_rate)]
+    if native_rate == sample_rate:
+        # mic supports target rate directly — record cleanly
+        audio = sd.rec(
+            int(duration * native_rate),
+            samplerate=native_rate,
+            channels=2,
+            dtype='int16',
+            device=device
+        )
+        sd.wait()
+    else:
+        # mic uses different rate — record at native then resample
+        audio = sd.rec(
+            int(duration * native_rate),
+            samplerate=native_rate,
+            channels=2,
+            dtype='int16',
+            device=device
+        )
+        sd.wait()
+        from scipy.signal import resample_poly
+        audio = resample_poly(audio, sample_rate, native_rate).astype(np.int16)
 
     timer_thread.join()
     print("Recording done.")
+
+    # convert stereo to mono
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1).astype(np.int16)
 
     with wave.open(output_path, "wb") as wf:
         wf.setnchannels(1)
@@ -275,10 +288,12 @@ if __name__ == "__main__":
 
             # Step 2 — transcribe
             user_text_input = transcribe_audio(RECORDING_PATH)
-            print(f"You said: {user_text_input}")
+            print(f"You said: {user_text_input}")  # ← add this line
 
+
+            # if nothing was heard, send '...' to Eve
             if not user_text_input:
-                print("Eve: ...")
+                print("Eve: ...")  # heard nothing, skip everything
             else:
                 # Step 3 — get Eve's LLM response
                 llm_response = generate_LLM_response(user_text_input)
