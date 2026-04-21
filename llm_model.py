@@ -35,7 +35,7 @@ RECORDING_PATH  = "stt/speech_inputs/live_input.wav"
 VOSK_MODEL_PATH = "stt/vosk-model-small-en-us-0.15"
 TTS_MODEL_PATH  = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH     = "tts/speech_outputs/response.wav"
-MIC_DEVICE      = 2       # USB mic on Pi (card 2) — change if needed
+MIC_DEVICE      = 1       # USB mic on Pi (card 2) — change if needed
 RECORD_DURATION = 5       # seconds to record
 AUDIO_DEVICE    = "bluez_output.40_ED_CF_C7_01_BB.1"  # AirPods — change if using PAM8403
 
@@ -177,16 +177,20 @@ def record_audio(output_path, duration=RECORD_DURATION, sample_rate=16000, devic
     timer_thread = threading.Thread(target=countdown)
     timer_thread.start()
 
+    native_rate = 44100
     audio = sd.rec(
-        int(duration * sample_rate),
-        samplerate=sample_rate,
+        int(duration * native_rate),
+        samplerate=native_rate,
         channels=1,
         dtype='int16',
         device=device
     )
     sd.wait()
-    timer_thread.join()
 
+    # downsample from 44100 to 16000 for Vosk
+    audio = audio[::int(native_rate / sample_rate)]
+
+    timer_thread.join()
     print("Recording done.")
 
     with wave.open(output_path, "wb") as wf:
@@ -271,23 +275,21 @@ if __name__ == "__main__":
 
             # Step 2 — transcribe
             user_text_input = transcribe_audio(RECORDING_PATH)
-
-            # if nothing was heard, send '...' to Eve
-            if not user_text_input:
-                user_text_input = "..."
-
             print(f"You said: {user_text_input}")
 
-            # Step 3 — get Eve's LLM response
-            llm_response = generate_LLM_response(user_text_input)
-            print(f"Eve: {llm_response}")
-            print("-" * 50)
+            if not user_text_input:
+                print("Eve: ...")
+            else:
+                # Step 3 — get Eve's LLM response
+                llm_response = generate_LLM_response(user_text_input)
+                print(f"Eve: {llm_response}")
+                print("-" * 50)
 
-            # Step 4 — convert to speech
-            generate_tts_response(llm_response, OUTPUT_PATH)
+                # Step 4 — convert to speech
+                generate_tts_response(llm_response, OUTPUT_PATH)
 
-            # Step 5 — play audio
-            play_audio(OUTPUT_PATH)
+                # Step 5 — play audio
+                play_audio(OUTPUT_PATH)
 
     except KeyboardInterrupt:
         print("\nEVE offline.")
