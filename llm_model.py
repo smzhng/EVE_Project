@@ -172,37 +172,29 @@ def record_audio(output_path, duration=RECORD_DURATION, sample_rate=16000, devic
     timer_thread = threading.Thread(target=countdown)
     timer_thread.start()
 
-    # get the mic's actual native sample rate
+    # auto-detect mic's native sample rate and channel count
     device_info = sd.query_devices(device)
     native_rate = int(device_info['default_samplerate'])
+    channels    = min(2, int(device_info['max_input_channels']))
 
-    if native_rate == sample_rate:
-        # mic supports target rate directly — record cleanly
-        audio = sd.rec(
-            int(duration * native_rate),
-            samplerate=native_rate,
-            channels=2,
-            dtype='int16',
-            device=device
-        )
-        sd.wait()
-    else:
-        # mic uses different rate — record at native then resample
-        audio = sd.rec(
-            int(duration * native_rate),
-            samplerate=native_rate,
-            channels=2,
-            dtype='int16',
-            device=device
-        )
-        sd.wait()
+    audio = sd.rec(
+        int(duration * native_rate),
+        samplerate=native_rate,
+        channels=channels,
+        dtype='int16',
+        device=device
+    )
+    sd.wait()
+    
+    # resample to target rate if needed
+    if native_rate != sample_rate:
         from scipy.signal import resample_poly
         audio = resample_poly(audio, sample_rate, native_rate).astype(np.int16)
 
     timer_thread.join()
     print("Recording done.")
 
-    # convert stereo to mono
+    # convert stereo to mono if needed
     if audio.ndim == 2:
         audio = audio.mean(axis=1).astype(np.int16)
 
