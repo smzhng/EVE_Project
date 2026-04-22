@@ -10,6 +10,12 @@ Wiring:
     Display 1 CS  →  GPIO 8  (CE0, Pin 24)
     Display 2 CS  →  GPIO 7  (CE1, Pin 26)
 
+Run standalone:
+    sudo python3 eve_eyes.py
+
+Run together with voice:
+    sudo python3 main.py
+
 Install dependencies:
     sudo pip3 install pillow spidev lgpio --break-system-packages
 """
@@ -38,7 +44,6 @@ COLOR_EYE_GLOW_COMBAT = (255, 120, 120) # red glow
 
 # Eye shape (oval dimensions)
 EYE_W = 90   # eye width
-EYE_H = 55   # eye height
 EYE_CX = SCREEN_WIDTH  // 2   # center x
 EYE_CY = SCREEN_HEIGHT // 2   # center y
 
@@ -67,13 +72,9 @@ spi2.mode = 0
 # ── DISPLAY DRIVER ────────────────────────────────────────────────────────────
 def reset_display():
     """Hardware reset both displays simultaneously."""
-    lgpio.gpio_write(h, PIN_RST, 1)
-    time.sleep(0.1)
-    lgpio.gpio_write(h, PIN_RST, 0)
-    time.sleep(0.1)
-    lgpio.gpio_write(h, PIN_RST, 1)
-    time.sleep(0.1)
-
+    lgpio.gpio_write(h, PIN_RST, 1); time.sleep(0.1)
+    lgpio.gpio_write(h, PIN_RST, 0); time.sleep(0.1)
+    lgpio.gpio_write(h, PIN_RST, 1); time.sleep(0.1)
 
 def send_command(spi, cmd):
     """Send a command byte to a display."""
@@ -84,85 +85,48 @@ def send_command(spi, cmd):
 def send_data(spi, data):
     """Send data bytes to a display."""
     lgpio.gpio_write(h, PIN_DC, 1)
-    if isinstance(data, int):
-        spi.writebytes([data])
-    else:
-        # send in chunks to avoid SPI buffer overflow
-        chunk_size = 4096
-        for i in range(0, len(data), chunk_size):
-            spi.writebytes(data[i:i + chunk_size])
+    chunk = 4096
+    for i in range(0, len(data), chunk):
+        spi.writebytes(data[i:i+chunk])
 
 
 def init_display(spi):
     """Initialize SSD1351 OLED display."""
-    send_command(spi, 0xFD)  # command lock
-    send_data(spi, 0x12)
-    send_command(spi, 0xFD)
-    send_data(spi, 0xB1)
-    send_command(spi, 0xAE)  # display off
-    send_command(spi, 0xB3)  # clock divider
-    send_data(spi, 0xF1)
-    send_command(spi, 0xCA)  # mux ratio
-    send_data(spi, 0x7F)
-    send_command(spi, 0xA0)  # remap and color depth
-    send_data(spi, 0x74)
-    send_command(spi, 0x15)  # set column
-    send_data(spi, 0x00)
-    send_data(spi, 0x7F)
-    send_command(spi, 0x75)  # set row
-    send_data(spi, 0x00)
-    send_data(spi, 0x7F)
-    send_command(spi, 0xA1)  # start line
-    send_data(spi, 0x00)
-    send_command(spi, 0xA2)  # display offset
-    send_data(spi, 0x00)
-    send_command(spi, 0xB5)  # GPIO
-    send_data(spi, 0x00)
-    send_command(spi, 0xAB)  # function select
-    send_data(spi, 0x01)
-    send_command(spi, 0xB1)  # precharge
-    send_data(spi, 0x32)
-    send_command(spi, 0xBE)  # VCOMH voltage
-    send_data(spi, 0x05)
-    send_command(spi, 0xA6)  # normal display
-    send_command(spi, 0xC1)  # contrast RGB
-    send_data(spi, 0xC8)
-    send_data(spi, 0x80)
-    send_data(spi, 0xC8)
-    send_command(spi, 0xC7)  # master contrast
-    send_data(spi, 0x0F)
-    send_command(spi, 0xB4)  # set VSL
-    send_data(spi, 0xA0)
-    send_data(spi, 0xB5)
-    send_data(spi, 0x55)
-    send_command(spi, 0xB6)  # precharge 2
-    send_data(spi, 0x01)
-    send_command(spi, 0xAF)  # display on
+    send_command(spi, 0xFD); send_data(spi, [0x12])
+    send_command(spi, 0xFD); send_data(spi, [0xB1])
+    send_command(spi, 0xAE)
+    send_command(spi, 0xB3); send_data(spi, [0xF1])
+    send_command(spi, 0xCA); send_data(spi, [0x7F])
+    send_command(spi, 0xA0); send_data(spi, [0x74])
+    send_command(spi, 0x15); send_data(spi, [0x00, 0x7F])
+    send_command(spi, 0x75); send_data(spi, [0x00, 0x7F])
+    send_command(spi, 0xA1); send_data(spi, [0x00])
+    send_command(spi, 0xA2); send_data(spi, [0x00])
+    send_command(spi, 0xB5); send_data(spi, [0x00])
+    send_command(spi, 0xAB); send_data(spi, [0x01])
+    send_command(spi, 0xB1); send_data(spi, [0x32])
+    send_command(spi, 0xBE); send_data(spi, [0x05])
+    send_command(spi, 0xA6)
+    send_command(spi, 0xC1); send_data(spi, [0xC8, 0x80, 0xC8])
+    send_command(spi, 0xC7); send_data(spi, [0x0F])
+    send_command(spi, 0xB4); send_data(spi, [0xA0, 0xB5, 0x55])
+    send_command(spi, 0xB6); send_data(spi, [0x01])
+    send_command(spi, 0xAF)
 
-
-def image_to_bytes(img):
-    """Convert PIL image to 16-bit RGB565 byte list for SSD1351."""
+def show(spi, img):
+    send_command(spi, 0x15); send_data(spi, [0x00, 0x7F])
+    send_command(spi, 0x75); send_data(spi, [0x00, 0x7F])
+    send_command(spi, 0x5C)
     pixels = list(img.getdata())
     data = []
     for r, g, b in pixels:
-        # convert RGB888 to RGB565
-        rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        data.append((rgb565 >> 8) & 0xFF)
-        data.append(rgb565 & 0xFF)
-    return data
-
-
-def show_image(spi, img):
-    """Send a PIL image to the display."""
-    send_command(spi, 0x15)   # set column address
-    send_data(spi, 0x00)
-    send_data(spi, 0x7F)
-    send_command(spi, 0x75)   # set row address
-    send_data(spi, 0x00)
-    send_data(spi, 0x7F)
-    send_command(spi, 0x5C)   # write RAM
-    data = image_to_bytes(img)
+        rgb = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+        data += [(rgb >> 8) & 0xFF, rgb & 0xFF]
     send_data(spi, data)
+
+def show_both(img):
+    show(spi1, img)
+    show(spi2, img)
 
 
 # ── EYE DRAWING ───────────────────────────────────────────────────────────────
@@ -181,58 +145,50 @@ def draw_eye(blink_amount=1.0, combat_mode=False, pulse=1.0):
 
     # pick colors based on mode
     if combat_mode:
-        inner_color = COLOR_EYE_GLOW_COMBAT
-        outer_color = COLOR_EYE_COMBAT
+        core_color = (255, 255, 200)
+        mid_color  = (255, 80,  40 )
+        glow_color = (180, 20,  10 )
     else:
-        inner_color = COLOR_EYE_GLOW
-        outer_color = COLOR_EYE_NORMAL
+        core_color = (200, 240, 255)
+        mid_color  = (40,  160, 255)
+        glow_color = (0,   60,  180)
 
-    # apply pulse brightness
-    outer_color = tuple(int(c * (0.6 + 0.4 * pulse)) for c in outer_color)
-    inner_color = tuple(int(c * (0.7 + 0.3 * pulse)) for c in inner_color)
+    def pulse_color(c):
+        return tuple(int(x * (0.7 + 0.3 * pulse)) for x in c)
 
-    # apply blink — squish eye vertically
-    blink_h = max(2, int(EYE_H * blink_amount))
+    core_color = pulse_color(core_color)
+    mid_color  = pulse_color(mid_color)
+    glow_color = pulse_color(glow_color)
+
+    EYE_H = max(1, int(blink_amount * 100))
+    cx    = SCREEN_WIDTH  // 2
+    cy    = SCREEN_HEIGHT // 2
 
     # draw outer glow layers (larger ovals getting dimmer outward)
-    for i in range(4, 0, -1):
-        glow_factor = i / 4.0 * 0.3
-        glow_color  = tuple(int(c * glow_factor) for c in outer_color)
-        glow_w = EYE_W + i * 6
-        glow_h = blink_h + i * 4
-        draw.ellipse([
-            EYE_CX - glow_w // 2,
-            EYE_CY - glow_h // 2,
-            EYE_CX + glow_w // 2,
-            EYE_CY + glow_h // 2
-        ], fill=glow_color)
+    for i in range(6, 0, -1):
+        alpha_factor = i / 6.0 * 0.25
+        g = tuple(int(x * alpha_factor) for x in glow_color)
+        w = EYE_W + i * 5
+        h_val = max(1, EYE_H + i * 3)
+        draw.ellipse([cx - w//2, cy - h_val//2, cx + w//2, cy + h_val//2], fill=g)
 
-    # draw main eye oval
-    draw.ellipse([
-        EYE_CX - EYE_W // 2,
-        EYE_CY - blink_h // 2,
-        EYE_CX + EYE_W // 2,
-        EYE_CY + blink_h // 2
-    ], fill=outer_color)
+    # main eye body
+    draw.ellipse([cx - EYE_W//2, cy - EYE_H//2,
+                  cx + EYE_W//2, cy + EYE_H//2], fill=mid_color)
 
-    # draw bright inner highlight (smaller oval in center)
-    inner_w = int(EYE_W * 0.55)
-    inner_h = int(blink_h * 0.55)
-    draw.ellipse([
-        EYE_CX - inner_w // 2,
-        EYE_CY - inner_h // 2,
-        EYE_CX + inner_w // 2,
-        EYE_CY + inner_h // 2
-    ], fill=inner_color)
+    # bright inner core
+    core_w = int(EYE_W * 0.75)
+    core_h = max(1, int(EYE_H * 0.35))
+    draw.ellipse([cx - core_w//2, cy - core_h//2,
+                  cx + core_w//2, cy + core_h//2], fill=core_color)
+
+    # white hotspot
+    hot_w = int(EYE_W * 0.3)
+    hot_h = max(1, int(EYE_H * 0.15))
+    draw.ellipse([cx - hot_w//2, cy - hot_h//2,
+                  cx + hot_w//2, cy + hot_h//2], fill=(255, 255, 255))
 
     return img
-
-
-def send_to_both(img):
-    """Send the same image to both displays simultaneously."""
-    show_image(spi1, img)
-    show_image(spi2, img)
-
 
 # ── ANIMATION STATES ──────────────────────────────────────────────────────────
 class EveEyes:
@@ -258,10 +214,9 @@ class EveEyes:
         # ── pulse glow ────────────────────────────────────────────────────────
         self.pulse += PULSE_SPEED * self.pulse_dir
         if self.pulse >= 1.0:
-            self.pulse     = 1.0
-            self.pulse_dir = -1
+            self.pulse = 1.0; self.pulse_dir = -1
         elif self.pulse <= 0.0:
-            self.pulse     = 0.0
+            self.pulse = 0.0
             self.pulse_dir = 1
 
         # ── blink logic ───────────────────────────────────────────────────────
@@ -293,7 +248,7 @@ class EveEyes:
             combat_mode=self.combat_mode,
             pulse=self.pulse
         )
-        send_to_both(img)
+        show_both(img)
         time.sleep(BLINK_SPEED)
 
 
@@ -308,27 +263,25 @@ def startup_animation():
     for i in range(0, 11):
         pulse = i / 10.0
         img   = draw_eye(blink_amount=pulse, combat_mode=False, pulse=pulse)
-        send_to_both(img)
+        show_both(img)
         time.sleep(0.06)
 
     # quick double blink
     for _ in range(2):
         for amount in [1.0, 0.0, 1.0]:
             img = draw_eye(blink_amount=amount, combat_mode=False, pulse=1.0)
-            send_to_both(img)
+            show_both(img)
             time.sleep(0.08)
 
-    print("EVE online.")
+    print("EVE eyes online.")
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+def main():
     print("Initializing displays...")
-
     reset_display()
     init_display(spi1)
     init_display(spi2)
-
     print("Displays initialized.")
 
     # run startup animation
@@ -338,7 +291,6 @@ if __name__ == "__main__":
     eyes = EveEyes()
 
     print("Running. Press Ctrl+C to stop.")
-    print("Type 'c' + Enter to toggle combat mode (in another terminal).")
 
     try:
         while True:
@@ -348,8 +300,12 @@ if __name__ == "__main__":
         print("\nShutting down...")
         # clear both displays to black on exit
         black = Image.new("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), (0, 0, 0))
-        send_to_both(black)
+        show_both(black)
         spi1.close()
         spi2.close()
         lgpio.gpiochip_close(h)
         print("EVE eyes offline.")
+
+# ── RUN STANDALONE ────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    main()

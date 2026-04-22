@@ -7,8 +7,11 @@ EVE AI voice pipeline for Raspberry Pi.
 Pipeline:
     Mic → Vosk STT → Ollama LLM → Piper TTS → Speaker
 
-Run:
+Run standalone:
     python3 llm_model.py
+
+Run together with eyes:
+    python3 main.py
 
 Dependencies:
     sudo pip3 install ollama vosk sounddevice piper-tts numpy --break-system-packages
@@ -41,11 +44,16 @@ AUDIO_DEVICE    = "bluez_output.40_ED_CF_C7_01_BB.1"  # AirPods — change if us
 
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
-# Only needs to run once — model is saved locally by Ollama after this
-ollama.create(
-    model='eve',
-    from_='phi4-mini',
-    system="""
+# Skips creation if model already exists — only slow on very first run
+try:
+    ollama.show('eve')
+    print("Eve model already exists, skipping creation.")
+except:
+    print("Creating Eve model for the first time...")
+    ollama.create(
+        model='eve',
+        from_='phi4-mini',
+        system="""
     # ROLE: EVE (Extraterrestrial Vegetation Evaluator)
     # Full name: EVE — Extraterrestrial Vegetation Evaluator
     # Created by: Buy N Large corporation
@@ -70,6 +78,8 @@ ollama.create(
     - No full sentences. No explanations. No filler words.
     - Robotic and clipped at all times.
     - Express emotion through tone words in brackets e.g. [suspicious] [alarmed] [happy]
+    - If you cannot answer in 3 words or less, say "Classified." instead.
+    - NEVER output repeated numbers, lists, or rambling text.
 
     # EMOTIONAL STATES:
     HOSTILE    → strangers, threats, interference, weapons nearby
@@ -135,6 +145,12 @@ ollama.create(
 
     User: "Are you dangerous?"
     EVE: "Weapons online. Back away. [hostile]"
+
+    User: "What is five times five?"
+    EVE: "Classified."
+
+    User: "What is two plus two?"
+    EVE: "Irrelevant. Not directive."
     """
 )
 print("Eve LLM ready.")
@@ -158,11 +174,23 @@ def generate_LLM_response(user_text_input):
         messages=[{'role': 'user', 'content': user_text_input}],
         options={'temperature': 0.1}
     )
-    return response['message']['content']
+    llm_response = response['message']['content']
+
+    # safety net — if response is too long, truncate to first 3 sentences
+    sentences = llm_response.split('.')
+    if len(sentences) > 3:
+        llm_response = '. '.join(sentences[:3]) + '.'
+
+    return llm_response
 
 
 def record_audio(output_path, duration=RECORD_DURATION, sample_rate=16000, device=MIC_DEVICE):
-    
+    """
+    Records from mic and saves as 16kHz mono wav — ready for Vosk.
+    Auto-detects mic sample rate and channel count for cross-device compatibility.
+    Input:  output_path (str) — where to save the recording
+    Output: output_path (str) — same path, for chaining
+    """
     def countdown():
         for i in range(duration, 0, -1):
             print(f"{i}...")
@@ -256,7 +284,8 @@ def play_audio(file_path):
     """
     Plays a wav file.
     Windows: uses 'start'
-    Pi/Linux: uses paplay via PipeWire (AirPods or speaker)
+    Pi/Linux: uses paplay via PipeWire (AirPods or Bluetooth speaker)
+    Set AUDIO_DEVICE = None to use aplay (wired speaker)
     """
     if platform.system() == "Windows":
         subprocess.run(["start", file_path], shell=True)
@@ -267,36 +296,29 @@ def play_audio(file_path):
             subprocess.run(["aplay", file_path])
 
 
-# ── MAIN — Full Eve Pipeline ──────────────────────────────────────────────────
-if __name__ == "__main__":
-    print("EVE is online. Press Ctrl+C to shut down.")
+# ── MAIN FUNCTION (called by main.py or standalone) ───────────────────────────
+def main():
+    print("EVE voice pipeline online. Press Ctrl+C to shut down.")
     print("-" * 50)
 
     try:
         while True:
-
-            # Step 1 — record from mic
             record_audio(RECORDING_PATH)
-
-            # Step 2 — transcribe
             user_text_input = transcribe_audio(RECORDING_PATH)
-            print(f"You said: {user_text_input}")  # ← add this line
+            print(f"You said: {user_text_input}")
 
-
-            # if nothing was heard, send '...' to Eve
             if not user_text_input:
-                print("Eve: ...")  # heard nothing, skip everything
+                print("Eve: ...")
             else:
-                # Step 3 — get Eve's LLM response
                 llm_response = generate_LLM_response(user_text_input)
                 print(f"Eve: {llm_response}")
                 print("-" * 50)
-
-                # Step 4 — convert to speech
                 generate_tts_response(llm_response, OUTPUT_PATH)
-
-                # Step 5 — play audio
                 play_audio(OUTPUT_PATH)
 
     except KeyboardInterrupt:
-        print("\nEVE offline.")
+        print("\nEVE voice offline.")
+
+# ── RUN STANDALONE ────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    main()
