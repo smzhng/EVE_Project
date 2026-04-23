@@ -217,7 +217,7 @@ class EveEyes:
         self.blink_state = 0      # 0=not blinking, 1=closing, 2=opening
         self.blink_start = 0
         self.blink_dur   = 0
-        self.next_blink = time.time() + random.uniform(3, 7)
+        self.next_blink = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
 
     def set_combat_mode(self, active):
         self.combat_mode = active
@@ -231,6 +231,7 @@ class EveEyes:
             self.blink_state = 1   # start closing
             self.blink_start = now
             self.blink_dur   = random.uniform(0.036, 0.072)  # ~1/28 to 1/14 sec
+            self.orig_dur    = self.blink_dur
         
         # compute threshold
         uT = 0
@@ -258,7 +259,7 @@ class EveEyes:
                     self.blink_dur  *= 2    # opening is 2x slower
                 else:                        # finished opening → done
                     self.blink_state = 0
-                    self.next_blink  = now + random.uniform(3, 7) * 3
+                    self.next_blink  = now + self.orig_dur * 3 + random.uniform(0, 4)
 
         frame = render_eye(
             self.sclera, self.upper, self.lower,
