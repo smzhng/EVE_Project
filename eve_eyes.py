@@ -178,15 +178,9 @@ def show_both(img):
 # ── EYE RENDERER ───────────────────────────────────────────────────────────────
 def render_eye(sclera, upper, lower, uT, lT, combat_mode=False):
     """
-    Render one eye frame using the original EveEye.h data.
-
-    blink_t:     0.0 = fully open, 1.0 = fully closed
-    combat_mode: tints eye red when True
-
-    The eyelid threshold works exactly like Uncanny Eyes:
-      - upper[y][x] <= uT  → covered by upper eyelid (black)
-      - lower[y][x] <= lT  → covered by lower eyelid (black)
-      - otherwise          → show sclera pixel
+    uT: upper eyelid threshold (0=open, 254=closed)
+    lT: lower eyelid threshold (0=open, 254=closed)
+    Pixel is eyelid if upper[y][x] <= uT or lower[y][x] <= lT
     """
     # Crop sclera region shown on screen
     sy = SCLERA_Y
@@ -204,11 +198,11 @@ def render_eye(sclera, upper, lower, uT, lT, combat_mode=False):
     # Combat mode — tint blue pixels red
     if combat_mode:
         # Find pixels that are blue (b channel dominant)
-        blue_dominant = (result[:,:,2] > result[:,:,0]) & (result[:,:,2] > 50)
-        r_channel = result[:,:,2].copy()  # swap blue to red
-        result[:,:,2] = result[:,:,0]     # zero blue
-        result[:,:,0] = r_channel         # red = was blue
-        result[:,:,1] = (result[:,:,1] * 0.3).astype(np.uint8)  # dim green
+        b_dominant = (result[:,:,2] > result[:,:,0]) & (result[:,:,2] > 50)
+        r_ch = result[:,:,2].copy()  # swap blue to red
+        result[b_dominant, 0] = r_ch[b_dominant]
+        result[b_dominant, 2] = 0
+        result[b_dominant, 1] = (result[b_dominant,1] * 0.3).astype(np.uint8)
 
     return result
 
@@ -220,15 +214,12 @@ class EveEyes:
         self.upper       = upper
         self.lower       = lower
         self.combat_mode = False
-        self.blink_t     = 0.0 # 0=open, 1=closed
-        self.is_blinking = False
-        self.blink_phase = 0   # 0=closing, 1=opening
-        self.next_blink = time.time() + random.uniform(
-            BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX
-        )
+        self.blink_state = 0      # 0=not blinking, 1=closing, 2=opening
+        self.blink_start = 0
+        self.blink_dur   = 0
+        self.next_blink = time.time() + random.uniform(3, 7)
 
     def set_combat_mode(self, active):
-        """Switch between normal blue and combat red."""
         self.combat_mode = active
         print(f"Eve eyes: {'COMBAT MODE' if active else 'normal mode'}")
 
@@ -236,28 +227,39 @@ class EveEyes:
         now = time.time()
 
         # Trigger blink
-        if not self.is_blinking and now >= self.next_blink:
-            self.is_blinking = True
-            self.blink_phase = 0
+        if self.blink_state == 0 and now >= self.next_blink:
+            self.blink_state = 1   # start closing
+            self.blink_start = now
+            self.blink_dur   = random.uniform(0.036, 0.072)  # ~1/28 to 1/14 sec
         
-        # Animate blink
-        if self.is_blinking:
-            if self.blink_phase == 0:   # closing
-                self.blink_t += 0.15
-                if self.blink_t >= 1.0:
-                    self.blink_t = 1.0
-                    self.blink_phase  = 1
-            else:                       # opening
-                self.blink_t -= 0.15
-                if self.blink_t <= 0.0:
-                    self.blink_t     = 0.0
-                    self.is_blinking = False
-                    self.next_blink  = now + random.uniform(
-                        BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX
-                    )
+        # compute threshold
+        uT = 0
+        lT = 0
 
-        uT = int(self.blink_t * 254)
-        lT = int(self.blink_t * 64)
+        if self.blink_state > 0:
+            elapsed = now - self.blink_start
+            s = min(1.0, elapsed / self.blink_dur)
+            s_int = int(s * 255)
+
+            if self.blink_state == 2:  # opening (DEBLINK)
+                s_int = 1 + s_int
+            else:                       # closing (ENBLINK)
+                s_int = 256 - s_int
+
+            # exact formula from Eve.ino
+            uT = (0 * s_int + 254 * (257 - s_int)) // 256
+            lT = (0 * s_int + 254 * (257 - s_int)) // 256
+
+            # advance state
+            if elapsed >= self.blink_dur:
+                if self.blink_state == 1:   # finished closing → start opening
+                    self.blink_state = 2
+                    self.blink_start = now
+                    self.blink_dur  *= 2    # opening is 2x slower
+                else:                        # finished opening → done
+                    self.blink_state = 0
+                    self.next_blink  = now + random.uniform(3, 7) * 3
+
         frame = render_eye(
             self.sclera, self.upper, self.lower,
             uT, lT, self.combat_mode
@@ -282,12 +284,10 @@ def startup_animation(sclera, upper, lower):
 
     # quick double blink
     for _ in range(2):
-        for amount in [1.0, 0.0, 1.0]:
-            uT = int(amount * 254)
+        for uT in [0, 254, 0]:
             frame = render_eye(sclera, upper, lower, uT, 0)
             show_both(frame)
             time.sleep(0.08)
-
     print("EVE eyes online.")
 
 
