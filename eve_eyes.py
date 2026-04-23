@@ -3,6 +3,9 @@
 eve_eyes.py
 -----------
 Animated eye display for EVE (Wall-E) using two Waveshare 1.5inch RGB OLED modules.
+Eye graphics extracted directly from the original ShimmerNZ/EVE-2.0 project
+(EveEye.h) — sclera texture + eyelid masks rendered faithfully.
+
 Runs on Raspberry Pi 5 using SPI interface.
 
 Wiring:
@@ -16,42 +19,83 @@ Run standalone:
 Run together with voice:
     sudo python3 main.py
 
-Install dependencies:
+Dependencies:
     sudo pip3 install pillow spidev lgpio --break-system-packages
 """
 
 import time
-import math
+import numpy as np
 import random
 import lgpio
 import spidev
 from PIL import Image, ImageDraw
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-SCREEN_WIDTH  = 128
-SCREEN_HEIGHT = 128
+SCREEN_W  = 128
+SCREEN_H = 128
+
+SCLERA_W = 200
+SCLERA_H = 200
+
+# Scroll position — center of sclera shown on screen
+SCLERA_X = (SCLERA_W - SCREEN_W) // 2   # = 36
+SCLERA_Y = (SCLERA_H - SCREEN_H) // 2   # = 36
 
 # GPIO pin numbers (BCM)
 PIN_DC  = 25
 PIN_RST = 27
 
-# Eye colors
-COLOR_BG            = (0,   0,   0  )   # black background
-COLOR_EYE_NORMAL    = (0,   180, 255)   # Eve's signature blue
-COLOR_EYE_GLOW      = (100, 220, 255)   # brighter center glow
-COLOR_EYE_COMBAT    = (255, 30,  30 )   # red for combat mode
-COLOR_EYE_GLOW_COMBAT = (255, 120, 120) # red glow
+# Blink timing
+BLINK_INTERVAL_MIN = 3.0
+BLINK_INTERVAL_MAX = 7.0
+FRAME_DELAY        = 0.04
 
-# Eye shape (oval dimensions)
-EYE_W = 90   # eye width
-EYE_CX = SCREEN_WIDTH  // 2   # center x
-EYE_CY = SCREEN_HEIGHT // 2   # center y
+# ── LOAD EYE DATA FROM EveEye.h ───────────────────────────────────────────────
+import os, re
 
-# Animation settings
-BLINK_INTERVAL_MIN = 3.0   # seconds between blinks (min)
-BLINK_INTERVAL_MAX = 7.0   # seconds between blinks (max)
-BLINK_SPEED        = 0.04  # seconds per blink frame
-PULSE_SPEED        = 0.05  # glow pulse speed
+def load_eye_data():
+    """
+    Load sclera, upper and lower eyelid arrays from EveEye.h.
+    Looks for EveEye.h in the same directory as this script.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    h_file = os.path.join(script_dir, 'EveEye.h')
+
+    if not os.path.exists(h_file):
+        raise FileNotFoundError(
+            f"EveEye.h not found at {h_file}\n"
+            "Please place EveEye.h in the same folder as eve_eyes.py"
+        )
+
+    with open(h_file, 'r') as f:
+        content = f.read()
+
+    # ── Sclera (RGB565 → RGB888) ──────────────────────────────────────────────
+    end = content.find('iris[')
+    hex16 = re.findall(r'0x([0-9A-Fa-f]{4})', content[:end])
+    def rgb565(v):
+        v = int(v, 16)
+        return ((v >> 11) & 0x1F) << 3, ((v >> 5) & 0x3F) << 2, (v & 0x1F) << 3
+    sclera_pixels = [rgb565(h) for h in hex16[:SCLERA_W * SCLERA_H]]
+    sclera = np.array(sclera_pixels, dtype=np.uint8).reshape(SCLERA_H, SCLERA_W, 3)
+
+    # ── Eyelid masks (uint8) ──────────────────────────────────────────────────
+    def extract_uint8_array(content, name):
+        idx = content.find(f'const uint8_t {name}[SCREEN_HEIGHT][SCREEN_WIDTH]')
+        if idx == -1:
+            return None
+        bs = content.find('{', idx)
+        be = content.find('};', bs)
+        vals = re.findall(r'0x([0-9A-Fa-f]{2})', content[bs:be])
+        return np.array([int(v, 16) for v in vals[:SCREEN_W * SCREEN_H]],
+                        dtype=np.uint8).reshape(SCREEN_H, SCREEN_W)
+
+    upper = extract_uint8_array(content, 'upper')
+    lower = extract_uint8_array(content, 'lower')
+
+    print(f"Eye data loaded: sclera {sclera.shape}, upper {upper.shape}, lower {lower.shape}")
+    return sclera, upper, lower
+
 
 # ── SPI + GPIO SETUP ──────────────────────────────────────────────────────────
 h = lgpio.gpiochip_open(0)
@@ -59,15 +103,14 @@ lgpio.gpio_claim_output(h, PIN_DC)
 lgpio.gpio_claim_output(h, PIN_RST)
 
 spi1 = spidev.SpiDev()
-spi1.open(0, 0)   # display 1 — CE0
+spi1.open(0, 0)
 spi1.max_speed_hz = 40000000
 spi1.mode = 0
 
 spi2 = spidev.SpiDev()
-spi2.open(0, 1)   # display 2 — CE1
+spi2.open(0, 1)
 spi2.max_speed_hz = 40000000
 spi2.mode = 0
-
 
 # ── DISPLAY DRIVER ────────────────────────────────────────────────────────────
 def reset_display():
@@ -81,14 +124,12 @@ def send_command(spi, cmd):
     lgpio.gpio_write(h, PIN_DC, 0)
     spi.writebytes([cmd])
 
-
 def send_data(spi, data):
     """Send data bytes to a display."""
     lgpio.gpio_write(h, PIN_DC, 1)
     chunk = 4096
     for i in range(0, len(data), chunk):
         spi.writebytes(data[i:i+chunk])
-
 
 def init_display(spi):
     """Initialize SSD1351 OLED display."""
@@ -117,11 +158,16 @@ def show(spi, img):
     send_command(spi, 0x15); send_data(spi, [0x00, 0x7F])
     send_command(spi, 0x75); send_data(spi, [0x00, 0x7F])
     send_command(spi, 0x5C)
-    pixels = list(img.getdata())
-    data = []
-    for r, g, b in pixels:
-        rgb = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-        data += [(rgb >> 8) & 0xFF, rgb & 0xFF]
+    # Convert RGB888 → RGB565
+    r = img[:,:,0].astype(np.uint16)
+    g = img[:,:,1].astype(np.uint16)
+    b = img[:,:,2].astype(np.uint16)
+    rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
+    # Big-endian byte order for SSD1351
+    high = (rgb565 >> 8).astype(np.uint8).flatten().tolist()
+    low  = (rgb565 & 0xFF).astype(np.uint8).flatten().tolist()
+    data = [val for pair in zip(high, low) for val in pair]
+
     send_data(spi, data)
 
 def show_both(img):
@@ -129,77 +175,55 @@ def show_both(img):
     show(spi2, img)
 
 
-# ── EYE DRAWING ───────────────────────────────────────────────────────────────
-def draw_eye(blink_amount=1.0, combat_mode=False, pulse=1.0):
+# ── EYE RENDERER ───────────────────────────────────────────────────────────────
+def render_eye(sclera, upper, lower, uT, lT, combat_mode=False):
     """
-    Draw Eve's eye on a PIL image.
+    Render one eye frame using the original EveEye.h data.
 
-    blink_amount: 1.0 = fully open, 0.0 = fully closed
-    combat_mode:  False = blue, True = red
-    pulse:        0.0 to 1.0, controls glow brightness
+    blink_t:     0.0 = fully open, 1.0 = fully closed
+    combat_mode: tints eye red when True
 
-    Returns a PIL Image ready to send to display.
+    The eyelid threshold works exactly like Uncanny Eyes:
+      - upper[y][x] <= uT  → covered by upper eyelid (black)
+      - lower[y][x] <= lT  → covered by lower eyelid (black)
+      - otherwise          → show sclera pixel
     """
-    img  = Image.new("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), COLOR_BG)
-    draw = ImageDraw.Draw(img)
+    # Crop sclera region shown on screen
+    sy = SCLERA_Y
+    sx = SCLERA_X
+    sclera_crop = sclera[sy:sy+SCREEN_H, sx:sx+SCREEN_W].copy()
 
-    # pick colors based on mode
+    # Apply eyelid masks
+    upper_mask = upper <= uT   # True where covered by upper lid
+    lower_mask = lower <= lT   # True where covered by lower lid
+    eyelid_mask = upper_mask | lower_mask
+
+    result = sclera_crop.copy()
+    result[eyelid_mask] = [0, 0, 0]
+
+    # Combat mode — tint blue pixels red
     if combat_mode:
-        core_color = (255, 255, 200)
-        mid_color  = (255, 80,  40 )
-        glow_color = (180, 20,  10 )
-    else:
-        core_color = (200, 240, 255)
-        mid_color  = (40,  160, 255)
-        glow_color = (0,   60,  180)
+        # Find pixels that are blue (b channel dominant)
+        blue_dominant = (result[:,:,2] > result[:,:,0]) & (result[:,:,2] > 50)
+        r_channel = result[:,:,2].copy()  # swap blue to red
+        result[:,:,2] = result[:,:,0]     # zero blue
+        result[:,:,0] = r_channel         # red = was blue
+        result[:,:,1] = (result[:,:,1] * 0.3).astype(np.uint8)  # dim green
 
-    def pulse_color(c):
-        return tuple(int(x * (0.7 + 0.3 * pulse)) for x in c)
+    return result
 
-    core_color = pulse_color(core_color)
-    mid_color  = pulse_color(mid_color)
-    glow_color = pulse_color(glow_color)
-
-    EYE_H = max(1, int(blink_amount * 100))
-    cx    = SCREEN_WIDTH  // 2
-    cy    = SCREEN_HEIGHT // 2
-
-    # draw outer glow layers (larger ovals getting dimmer outward)
-    for i in range(6, 0, -1):
-        alpha_factor = i / 6.0 * 0.25
-        g = tuple(int(x * alpha_factor) for x in glow_color)
-        w = EYE_W + i * 5
-        h_val = max(1, EYE_H + i * 3)
-        draw.ellipse([cx - w//2, cy - h_val//2, cx + w//2, cy + h_val//2], fill=g)
-
-    # main eye body
-    draw.ellipse([cx - EYE_W//2, cy - EYE_H//2,
-                  cx + EYE_W//2, cy + EYE_H//2], fill=mid_color)
-
-    # bright inner core
-    core_w = int(EYE_W * 0.75)
-    core_h = max(1, int(EYE_H * 0.35))
-    draw.ellipse([cx - core_w//2, cy - core_h//2,
-                  cx + core_w//2, cy + core_h//2], fill=core_color)
-
-    # white hotspot
-    hot_w = int(EYE_W * 0.3)
-    hot_h = max(1, int(EYE_H * 0.15))
-    draw.ellipse([cx - hot_w//2, cy - hot_h//2,
-                  cx + hot_w//2, cy + hot_h//2], fill=(255, 255, 255))
-
-    return img
 
 # ── ANIMATION STATES ──────────────────────────────────────────────────────────
 class EveEyes:
-    def __init__(self):
-        self.combat_mode     = False
-        self.pulse           = 0.0
-        self.pulse_dir       = 1
-        self.blink_amount    = 1.0
-        self.is_blinking     = False
-        self.blink_phase     = 0   # 0=closing 1=opening
-        self.next_blink_time = time.time() + random.uniform(
+    def __init__(self, sclera, upper, lower):
+        self.sclera      = sclera
+        self.upper       = upper
+        self.lower       = lower
+        self.combat_mode = False
+        self.blink_t     = 0.0 # 0=open, 1=closed
+        self.is_blinking = False
+        self.blink_phase = 0   # 0=closing, 1=opening
+        self.next_blink = time.time() + random.uniform(
             BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX
         )
 
@@ -209,68 +233,59 @@ class EveEyes:
         print(f"Eve eyes: {'COMBAT MODE' if active else 'normal mode'}")
 
     def update(self):
-        """Update animation state and push frame to displays."""
-
-        # ── pulse glow ────────────────────────────────────────────────────────
-        self.pulse += PULSE_SPEED * self.pulse_dir
-        if self.pulse >= 1.0:
-            self.pulse = 1.0; self.pulse_dir = -1
-        elif self.pulse <= 0.0:
-            self.pulse = 0.0
-            self.pulse_dir = 1
-
-        # ── blink logic ───────────────────────────────────────────────────────
         now = time.time()
-        if not self.is_blinking and now >= self.next_blink_time:
-            self.is_blinking = True
-            self.blink_phase = 0   # start closing
 
+        # Trigger blink
+        if not self.is_blinking and now >= self.next_blink:
+            self.is_blinking = True
+            self.blink_phase = 0
+        
+        # Animate blink
         if self.is_blinking:
-            if self.blink_phase == 0:
-                # closing
-                self.blink_amount -= 0.2
-                if self.blink_amount <= 0.0:
-                    self.blink_amount = 0.0
+            if self.blink_phase == 0:   # closing
+                self.blink_t += 0.15
+                if self.blink_t >= 1.0:
+                    self.blink_t = 1.0
                     self.blink_phase  = 1
-            else:
-                # opening
-                self.blink_amount += 0.2
-                if self.blink_amount >= 1.0:
-                    self.blink_amount    = 1.0
-                    self.is_blinking     = False
-                    self.next_blink_time = now + random.uniform(
+            else:                       # opening
+                self.blink_t -= 0.15
+                if self.blink_t <= 0.0:
+                    self.blink_t     = 0.0
+                    self.is_blinking = False
+                    self.next_blink  = now + random.uniform(
                         BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX
                     )
 
-        # ── draw and send frame ───────────────────────────────────────────────
-        img = draw_eye(
-            blink_amount=self.blink_amount,
-            combat_mode=self.combat_mode,
-            pulse=self.pulse
+        uT = int(self.blink_t * 254)
+        lT = int(self.blink_t * 64)
+        frame = render_eye(
+            self.sclera, self.upper, self.lower,
+            uT, lT, self.combat_mode
         )
-        show_both(img)
-        time.sleep(BLINK_SPEED)
+        show_both(frame)
+        time.sleep(FRAME_DELAY)
 
 
 # ── STARTUP ANIMATION ─────────────────────────────────────────────────────────
-def startup_animation():
+def startup_animation(sclera, upper, lower):
     """
-    Eve's boot sequence — eye opens from a thin line to full size.
+    Eve powers on — eye opens from closed to fully open.
     """
     print("EVE boot sequence...")
 
     # fade in from black
-    for i in range(0, 11):
-        pulse = i / 10.0
-        img   = draw_eye(blink_amount=pulse, combat_mode=False, pulse=pulse)
-        show_both(img)
+    for i in range(11):
+        uT = int((1.0 - i / 10.0) * 254)
+        frame = render_eye(sclera, upper, lower, uT, 0)
+        show_both(frame)
         time.sleep(0.06)
 
     # quick double blink
     for _ in range(2):
         for amount in [1.0, 0.0, 1.0]:
-            img = draw_eye(blink_amount=amount, combat_mode=False, pulse=1.0)
-            show_both(img)
+            uT = int(amount * 254)
+            frame = render_eye(sclera, upper, lower, uT, 0)
+            show_both(frame)
             time.sleep(0.08)
 
     print("EVE eyes online.")
@@ -278,6 +293,9 @@ def startup_animation():
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main():
+    print("Loading eye data from EveEye.h...")
+    sclera, upper, lower = load_eye_data()
+
     print("Initializing displays...")
     reset_display()
     init_display(spi1)
@@ -285,12 +303,12 @@ def main():
     print("Displays initialized.")
 
     # run startup animation
-    startup_animation()
+    startup_animation(sclera, upper, lower)
 
     # create eye controller
-    eyes = EveEyes()
+    eyes = EveEyes(sclera, upper, lower)
 
-    print("Running. Press Ctrl+C to stop.")
+    print("Eye animation running. Press Ctrl+C to stop.")
 
     try:
         while True:
@@ -299,7 +317,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
         # clear both displays to black on exit
-        black = Image.new("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), (0, 0, 0))
+        black = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
         show_both(black)
         spi1.close()
         spi2.close()
