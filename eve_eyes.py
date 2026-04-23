@@ -172,7 +172,7 @@ def show(spi, img):
 
 def show_both(img):
     show(spi1, img)
-    show(spi2, img)
+    show(spi2, img[:, ::-1, :])
 
 
 # ── EYE RENDERER ───────────────────────────────────────────────────────────────
