@@ -287,7 +287,7 @@ def play_audio(file_path):
         if AUDIO_DEVICE:
             subprocess.run(["paplay", f"--device={AUDIO_DEVICE}", file_path])
         else:
-            subprocess.run(["aplay", "-D", "hw:2,0", file_path])
+            subprocess.run(["aplay", "-D", "plughw:2,0", file_path])
 
 
 # ── MAIN FUNCTION (called by main.py or standalone) ───────────────────────────
