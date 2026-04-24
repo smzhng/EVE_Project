@@ -40,7 +40,7 @@ TTS_MODEL_PATH  = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH     = "tts/speech_outputs/response.wav"
 MIC_DEVICE      = 1       # USB mic on Pi (card 2) — change if needed
 RECORD_DURATION = 5       # seconds to record
-AUDIO_DEVICE    = "bluez_output.40_ED_CF_C7_01_BB.1"  # AirPods — change if using PAM8403
+AUDIO_DEVICE    = None    # MAX98357A via I2S — uses aplay hw:2,0
 
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
@@ -281,19 +281,13 @@ def generate_tts_response(LLM_text_response, output_file_path):
 
 
 def play_audio(file_path):
-    """
-    Plays a wav file.
-    Windows: uses 'start'
-    Pi/Linux: uses paplay via PipeWire (AirPods or Bluetooth speaker)
-    Set AUDIO_DEVICE = None to use aplay (wired speaker)
-    """
     if platform.system() == "Windows":
         subprocess.run(["start", file_path], shell=True)
     else:
         if AUDIO_DEVICE:
             subprocess.run(["paplay", f"--device={AUDIO_DEVICE}", file_path])
         else:
-            subprocess.run(["aplay", file_path])
+            subprocess.run(["aplay", "-D", "hw:2,0", file_path])
 
 
 # ── MAIN FUNCTION (called by main.py or standalone) ───────────────────────────
