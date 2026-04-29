@@ -174,7 +174,7 @@ def show(spi, img):
 
 
 # ── EYE RENDERER ───────────────────────────────────────────────────────────────
-def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0):
+def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip_v=False):
     """
     uT: upper eyelid threshold (0=open, 254=closed)
     lT: lower eyelid threshold (0=open, 254=closed)
@@ -184,6 +184,10 @@ def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0):
     sy = SCLERA_Y
     sx = SCLERA_X
     sclera_crop = sclera[sy:sy+SCREEN_H, sx:sx+SCREEN_W].copy()
+
+    # flip sclera vertically for flipped display
+    if flip_v:
+        sclera_crop = sclera_crop[::-1, :, :]
 
     # shift the mask instead of the sclera
     if y_offset != 0:
@@ -264,8 +268,8 @@ class EveEyes:
                     self.blink_state = 0
                     self.next_blink  = now + self.orig_dur * 3 + random.uniform(0, 4)
 
-        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET)
-        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET)
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
+        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=False)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
         time.sleep(FRAME_DELAY)
@@ -281,8 +285,8 @@ def startup_animation(sclera, upper, lower):
     # fade in from black
     for i in range(11):
         uT = int((1.0 - i / 10.0) * 254)
-        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
-        frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=True)
+        frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=False)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
         time.sleep(0.06)
@@ -290,8 +294,8 @@ def startup_animation(sclera, upper, lower):
     # quick double blink
     for _ in range(2):
         for uT in [0, 254, 0]:
-            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
-            frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=True)
+            frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=False)
             show(spi1, frame_left)
             show(spi2, frame_right[:, ::-1, :])
             time.sleep(0.08)
