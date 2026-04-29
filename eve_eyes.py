@@ -37,7 +37,7 @@ SCREEN_H = 128
 SCLERA_W = 200
 SCLERA_H = 200
 
-EYE_Y_OFFSET = 3  # pixels — increase to shift left down / right up more
+EYE_Y_OFFSET = 5  # pixels — increase to shift left down / right up more
 
 # Scroll position — center of sclera shown on screen
 SCLERA_X = (SCLERA_W - SCREEN_W) // 2   # = 36
