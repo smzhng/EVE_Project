@@ -37,6 +37,8 @@ SCREEN_H = 128
 SCLERA_W = 200
 SCLERA_H = 200
 
+EYE_Y_OFFSET = 3  # pixels — increase to shift left down / right up more
+
 # Scroll position — center of sclera shown on screen
 SCLERA_X = (SCLERA_W - SCREEN_W) // 2   # = 36
 SCLERA_Y = (SCLERA_H - SCREEN_H) // 2   # = 36
@@ -170,20 +172,16 @@ def show(spi, img):
 
     send_data(spi, data)
 
-def show_both(img):
-    show(spi1, img)
-    show(spi2, img[:, ::-1, :])
-
 
 # ── EYE RENDERER ───────────────────────────────────────────────────────────────
-def render_eye(sclera, upper, lower, uT, lT, combat_mode=False):
+def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0):
     """
     uT: upper eyelid threshold (0=open, 254=closed)
     lT: lower eyelid threshold (0=open, 254=closed)
     Pixel is eyelid if upper[y][x] <= uT or lower[y][x] <= lT
     """
     # Crop sclera region shown on screen
-    sy = SCLERA_Y
+    sy = SCLERA_Y + y_offset
     sx = SCLERA_X
     sclera_crop = sclera[sy:sy+SCREEN_H, sx:sx+SCREEN_W].copy()
 
@@ -261,11 +259,10 @@ class EveEyes:
                     self.blink_state = 0
                     self.next_blink  = now + self.orig_dur * 3 + random.uniform(0, 4)
 
-        frame = render_eye(
-            self.sclera, self.upper, self.lower,
-            uT, lT, self.combat_mode
-        )
-        show_both(frame)
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=+EYE_Y_OFFSET)
+        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET)
+        show(spi1, frame_left)
+        show(spi2, frame_right[:, ::-1, :])
         time.sleep(FRAME_DELAY)
 
 
@@ -279,15 +276,19 @@ def startup_animation(sclera, upper, lower):
     # fade in from black
     for i in range(11):
         uT = int((1.0 - i / 10.0) * 254)
-        frame = render_eye(sclera, upper, lower, uT, 0)
-        show_both(frame)
+        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
+        frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+        show(spi1, frame_left)
+        show(spi2, frame_right[:, ::-1, :])
         time.sleep(0.06)
 
     # quick double blink
     for _ in range(2):
         for uT in [0, 254, 0]:
-            frame = render_eye(sclera, upper, lower, uT, 0)
-            show_both(frame)
+            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
+            frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+            show(spi1, frame_left)
+            show(spi2, frame_right[:, ::-1, :])
             time.sleep(0.08)
     print("EVE eyes online.")
 
@@ -319,7 +320,8 @@ def main():
         print("\nShutting down...")
         # clear both displays to black on exit
         black = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
-        show_both(black)
+        show(spi1, black)
+        show(spi2, black)
         spi1.close()
         spi2.close()
         lgpio.gpiochip_close(h)
