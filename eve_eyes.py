@@ -181,10 +181,15 @@ def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0):
     Pixel is eyelid if upper[y][x] <= uT or lower[y][x] <= lT
     """
     # Crop sclera region shown on screen
-    sy = SCLERA_Y + y_offset
+    sy = SCLERA_Y
     sx = SCLERA_X
     sclera_crop = sclera[sy:sy+SCREEN_H, sx:sx+SCREEN_W].copy()
 
+    # shift the mask instead of the sclera
+    if y_offset != 0:
+        upper = np.roll(upper, y_offset, axis=0)
+        lower = np.roll(lower, y_offset, axis=0)
+    
     # Apply eyelid masks
     upper_mask = upper <= uT   # True where covered by upper lid
     lower_mask = lower <= lT   # True where covered by lower lid
@@ -259,7 +264,7 @@ class EveEyes:
                     self.blink_state = 0
                     self.next_blink  = now + self.orig_dur * 3 + random.uniform(0, 4)
 
-        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET)
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=+EYE_Y_OFFSET)
         frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=+EYE_Y_OFFSET)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
@@ -276,7 +281,7 @@ def startup_animation(sclera, upper, lower):
     # fade in from black
     for i in range(11):
         uT = int((1.0 - i / 10.0) * 254)
-        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
         frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
@@ -285,7 +290,7 @@ def startup_animation(sclera, upper, lower):
     # quick double blink
     for _ in range(2):
         for uT in [0, 254, 0]:
-            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
             frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
             show(spi1, frame_left)
             show(spi2, frame_right[:, ::-1, :])
