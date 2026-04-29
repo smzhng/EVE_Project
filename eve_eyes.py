@@ -264,8 +264,8 @@ class EveEyes:
                     self.blink_state = 0
                     self.next_blink  = now + self.orig_dur * 3 + random.uniform(0, 4)
 
-        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=+EYE_Y_OFFSET)
-        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=+EYE_Y_OFFSET)
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET)
+        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
         time.sleep(FRAME_DELAY)
@@ -281,8 +281,8 @@ def startup_animation(sclera, upper, lower):
     # fade in from black
     for i in range(11):
         uT = int((1.0 - i / 10.0) * 254)
-        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
-        frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
+        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+        frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
         time.sleep(0.06)
@@ -290,8 +290,8 @@ def startup_animation(sclera, upper, lower):
     # quick double blink
     for _ in range(2):
         for uT in [0, 254, 0]:
-            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
-            frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=+EYE_Y_OFFSET)
+            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
+            frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET)
             show(spi1, frame_left)
             show(spi2, frame_right[:, ::-1, :])
             time.sleep(0.08)
