@@ -26,9 +26,9 @@ Dependencies:
 import time
 import numpy as np
 import random
-import lgpio
-import spidev
+import os, re
 from PIL import Image, ImageDraw
+
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SCREEN_W  = 128
@@ -52,8 +52,25 @@ BLINK_INTERVAL_MIN = 3.0
 BLINK_INTERVAL_MAX = 7.0
 FRAME_DELAY        = 0.04
 
+# LAPTOP VERSION
+
+LAPTOP_MODE = os.environ.get('EVE_LAPTOP_MODE') == '1'
+if not LAPTOP_MODE:
+    import lgpio
+    import spidev
+    h = lgpio.gpiochip_open(0)
+    lgpio.gpio_claim_output(h, PIN_DC)
+    lgpio.gpio_claim_output(h, PIN_RST)
+    spi1 = spidev.SpiDev()
+    spi1.open(0, 0)
+    spi1.max_speed_hz = 40000000
+    spi1.mode = 0
+    spi2 = spidev.SpiDev()
+    spi2.open(0, 1)
+    spi2.max_speed_hz = 40000000
+    spi2.mode = 0
+
 # ── LOAD EYE DATA FROM EveEye.h ───────────────────────────────────────────────
-import os, re
 
 def load_eye_data():
     """
@@ -98,22 +115,6 @@ def load_eye_data():
     print(f"Eye data loaded: sclera {sclera.shape}, upper {upper.shape}, lower {lower.shape}")
     return sclera, upper, lower
 
-
-# ── SPI + GPIO SETUP ──────────────────────────────────────────────────────────
-h = lgpio.gpiochip_open(0)
-lgpio.gpio_claim_output(h, PIN_DC)
-lgpio.gpio_claim_output(h, PIN_RST)
-
-spi1 = spidev.SpiDev()
-spi1.open(0, 0)
-spi1.max_speed_hz = 40000000
-spi1.mode = 0
-
-spi2 = spidev.SpiDev()
-spi2.open(0, 1)
-spi2.max_speed_hz = 40000000
-spi2.mode = 0
-
 # ── DISPLAY DRIVER ────────────────────────────────────────────────────────────
 def reset_display():
     """Hardware reset both displays simultaneously."""
@@ -157,6 +158,8 @@ def init_display(spi):
     send_command(spi, 0xAF)
 
 def show(spi, img):
+    if LAPTOP_MODE:
+        return  # no-op on laptop
     send_command(spi, 0x15); send_data(spi, [0x00, 0x7F])
     send_command(spi, 0x75); send_data(spi, [0x00, 0x7F])
     send_command(spi, 0x5C)
@@ -307,11 +310,12 @@ def main():
     print("Loading eye data from EveEye.h...")
     sclera, upper, lower = load_eye_data()
 
-    print("Initializing displays...")
-    reset_display()
-    init_display(spi1)
-    init_display(spi2)
-    print("Displays initialized.")
+    if not LAPTOP_MODE:
+        print("Initializing displays...")
+        reset_display()
+        init_display(spi1)
+        init_display(spi2)
+        print("Displays initialized.")
 
     # run startup animation
     startup_animation(sclera, upper, lower)
@@ -329,11 +333,12 @@ def main():
         print("\nShutting down...")
         # clear both displays to black on exit
         black = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
-        show(spi1, black)
-        show(spi2, black)
-        spi1.close()
-        spi2.close()
-        lgpio.gpiochip_close(h)
+        if not LAPTOP_MODE:
+            show(spi1, black)
+            show(spi2, black)
+            spi1.close()
+            spi2.close()
+            lgpio.gpiochip_close(h)
         print("EVE eyes offline.")
 
 # ── RUN STANDALONE ────────────────────────────────────────────────────────────
