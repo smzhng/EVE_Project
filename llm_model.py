@@ -38,7 +38,7 @@ RECORDING_PATH  = "stt/speech_inputs/live_input.wav"
 VOSK_MODEL_PATH = "stt/vosk-model-small-en-us-0.15"
 TTS_MODEL_PATH  = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH     = "tts/speech_outputs/response.wav"
-MIC_DEVICE      = 1       # USB mic on Pi (card 2) — change if needed
+MIC_DEVICE      = 0       # Use default system mic
 RECORD_DURATION = 5       # seconds to record
 AUDIO_DEVICE    = None    # MAX98357A via I2S — uses aplay hw:2,0
 
@@ -169,18 +169,20 @@ def generate_LLM_response(user_text_input):
     Input:  user_text_input (str) — what the user said
     Output: LLM_text_response (str) — Eve's response
     """
+    start_time = time.time()
     response = ollama.chat(
         model='eve',
         messages=[{'role': 'user', 'content': user_text_input}],
         options={'temperature': 0.1}
     )
+    elapsed = time.time() - start_time
     llm_response = response['message']['content']
 
     # safety net — if response is too long, truncate to first 3 sentences
     sentences = llm_response.split('.')
     if len(sentences) > 3:
         llm_response = '. '.join(sentences[:3]) + '.'
-
+    print(f"Response time: {elapsed:.2f}s")
     return llm_response
 
 
