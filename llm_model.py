@@ -21,6 +21,8 @@ Dependencies:
 # ── IMPORTS ───────────────────────────────────────────────────────────────────
 import os
 os.environ["VOSK_LOG_LEVEL"] = "-1"  # suppress Vosk logs
+from vosk import Model, KaldiRecognizer, SetLogLevel
+SetLogLevel(-1)  # call this directly after import
 import wave
 import json
 import time
