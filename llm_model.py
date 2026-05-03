@@ -38,7 +38,7 @@ RECORDING_PATH  = "stt/speech_inputs/live_input.wav"
 VOSK_MODEL_PATH = "stt/vosk-model-small-en-us-0.15"
 TTS_MODEL_PATH  = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH     = "tts/speech_outputs/response.wav"
-MIC_DEVICE      = 1       # Use default system mic
+MIC_DEVICE      = 0       # Use default system mic
 RECORD_DURATION = 5       # seconds to record
 AUDIO_DEVICE    = None    # MAX98357A via I2S — uses aplay hw:2,0
 
