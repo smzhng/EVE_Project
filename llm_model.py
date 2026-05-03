@@ -19,6 +19,7 @@ Dependencies:
 """
 
 # ── IMPORTS ───────────────────────────────────────────────────────────────────
+import os
 import wave
 import json
 import time
@@ -166,6 +167,7 @@ print("Eve LLM ready.")
 
 
 # ── 2. LOAD VOSK MODEL ────────────────────────────────────────────────────────
+os.environ["VOSK_LOG_LEVEL"] = "-1"  # suppress Vosk logs
 vosk_model = Model(VOSK_MODEL_PATH)
 print("Vosk model loaded.")
 
