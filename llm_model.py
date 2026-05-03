@@ -61,7 +61,7 @@ except:
     print("Creating Eve model for the first time...")
     ollama.create(
         model='eve',
-        from_='tinyllama',
+        from_='phi4-mini',
         system="""
     # ROLE: EVE (Extraterrestrial Vegetation Evaluator)
     # Full name: EVE — Extraterrestrial Vegetation Evaluator
