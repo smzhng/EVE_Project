@@ -32,13 +32,22 @@ import ollama
 from vosk import Model, KaldiRecognizer
 from piper import PiperVoice
 
+# find USB mic by name regardless of device number
+def get_mic_device():
+    devices = sd.query_devices()
+    for i, d in enumerate(devices):
+        if 'USB' in d['name'] and d['max_input_channels'] > 0:
+            return i
+    return None
+
+MIC_DEVICE = get_mic_device()
+print(f"Using mic device: {MIC_DEVICE}")
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 RECORDING_PATH  = "stt/speech_inputs/live_input.wav"
 VOSK_MODEL_PATH = "stt/vosk-model-small-en-us-0.15"
 TTS_MODEL_PATH  = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH     = "tts/speech_outputs/response.wav"
-MIC_DEVICE      = 0       # Use default system mic
 RECORD_DURATION = 5       # seconds to record
 AUDIO_DEVICE    = None    # MAX98357A via I2S — uses aplay hw:2,0
 
@@ -310,7 +319,7 @@ def main():
                 print(f"Eve: {llm_response}")
                 print("-" * 50)
                 generate_tts_response(llm_response, OUTPUT_PATH)
-                play_audio(OUTPUT_PATH)
+                # play_audio(OUTPUT_PATH)  # broken speaker (may 3)
 
     except KeyboardInterrupt:
         print("\nEVE voice offline.")
