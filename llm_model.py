@@ -220,20 +220,16 @@ print("Wake word model loaded.")
 # ── 4. DEFINE ALL FUNCTIONS ───────────────────────────────────────────────────
 
 def generate_LLM_response(user_text_input):
-    """
-    Sends user text to Eve LLM and returns her response as a string.
-    """
     start_time = time.time()
-    response = ollama.chat(
+    client = ollama.Client(host='http://172.20.10.4:11434')
+    response = client.chat(
         model='eve',
-        host='http://172.20.10.4:11434',
         messages=[{'role': 'user', 'content': user_text_input}],
         options={'temperature': 0.1}
     )
     elapsed = time.time() - start_time
     llm_response = response['message']['content']
 
-    # safety net — truncate to first 3 sentences if too long
     sentences = llm_response.split('.')
     if len(sentences) > 3:
         llm_response = '. '.join(sentences[:3]) + '.'
