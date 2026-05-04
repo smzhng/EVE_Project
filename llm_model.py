@@ -69,9 +69,9 @@ NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
 #   "hey_jarvis", "alexa", "hey_mycroft"
 # To use "hey_eve": train a custom model at github.com/dscripka/openWakeWord
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.9    # 0.0–1.0 — high to reduce false triggers
+WAKE_THRESHOLD     = 0.3    # 0.0–1.0 — high to reduce false triggers
 REQUIRED_HITS      = 5       # consecutive frames above threshold to confirm wake word
-NOISE_GATE         = 500     # ignore frames quieter than this energy level
+NOISE_GATE         = 0     # ignore frames quieter than this energy level
 
 # ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3       # 0=least aggressive, 3=most aggressive (filters noise)
