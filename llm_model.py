@@ -192,7 +192,7 @@ print("Vosk model loaded.")
 
 # ── 3. LOAD WAKE WORD MODEL ───────────────────────────────────────────────────
 print(f"Loading wake word model: {WAKE_WORD}...")
-oww_model = WakeModel(inference_framework="onnx")
+oww_model = WakeModel()
 print("Wake word model loaded.")
 
 
