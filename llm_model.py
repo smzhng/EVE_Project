@@ -69,7 +69,7 @@ NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
 #   "hey_jarvis", "alexa", "hey_mycroft"
 # To use "hey_eve": train a custom model at github.com/dscripka/openWakeWord
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.5     # 0.0–1.0 — raise if too many false triggers
+WAKE_THRESHOLD     = 0.7     # 0.0–1.0 — raise if too many false triggers
 
 # ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3       # 0=least aggressive, 3=most aggressive (filters noise)
@@ -412,6 +412,7 @@ def main():
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
                         print("-" * 50)
+                        print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")  # ← add this
                         generate_tts_response(llm_response, OUTPUT_PATH)
                         # play_audio(OUTPUT_PATH)  # uncomment when speaker is wired
 
