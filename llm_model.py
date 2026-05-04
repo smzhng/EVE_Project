@@ -397,10 +397,6 @@ def main():
                 )
                 oww_model.reset()
 
-                # flush buffered audio before resuming detection
-                for _ in range(10):
-                    stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
-
                 # ── Pipeline ──────────────────────────────────────────────────
                 if not audio_path:
                     print("Eve: ...")
