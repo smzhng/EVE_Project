@@ -63,6 +63,7 @@ OUTPUT_PATH        = "tts/speech_outputs/response.wav"
 AUDIO_DEVICE       = None    # MAX98357A via I2S — uses aplay hw:2,0
 SAMPLE_RATE        = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
 NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
+WAKE_COOLDOWN_S    = 5.0     # seconds to ignore wake word after each trigger
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 # Built-in options (no training needed):
@@ -97,7 +98,6 @@ def resample_to_16k(audio_bytes):
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
 try:
     ollama.show('eve')
-    print("Eve model already exists, skipping creation.")
 except:
     print("Creating Eve model for the first time...")
     ollama.create(
@@ -202,7 +202,7 @@ except:
     User: "What is two plus two?"
     EVE: "Irrelevant. Not directive."
     """
-)
+    )
 print("Eve LLM ready.")
 
 
@@ -251,7 +251,7 @@ def record_with_vad(stream):
     padding_frames = VAD_PADDING_MS // VAD_FRAME_MS
     ring_buffer    = collections.deque(maxlen=padding_frames)
     triggered      = False
-    voiced_frames  = []   # stores resampled 16kHz frame bytes
+    voiced_frames  = []
     max_frames     = int(VAD_MAX_RECORD_S * 1000 / VAD_FRAME_MS)
     frame_count    = 0
 
@@ -259,7 +259,7 @@ def record_with_vad(stream):
 
     while frame_count < max_frames:
         raw          = stream.read(VAD_NATIVE_SAMPLES, exception_on_overflow=False)
-        resampled    = resample_to_16k(raw)       # → 480 samples @ 16kHz
+        resampled    = resample_to_16k(raw)
         frame_bytes  = resampled.tobytes()
         frame_count += 1
         is_speech    = vad.is_speech(frame_bytes, SAMPLE_RATE)
@@ -293,9 +293,7 @@ def record_with_vad(stream):
 
 
 def transcribe_audio(audio_path):
-    """
-    Transcribes a 16kHz mono wav file using Vosk.
-    """
+    """Transcribes a 16kHz mono wav file using Vosk."""
     wf  = wave.open(audio_path, "rb")
     rec = KaldiRecognizer(vosk_model, wf.getframerate())
 
@@ -316,14 +314,11 @@ def transcribe_audio(audio_path):
 
 
 def generate_tts_response(LLM_text_response, output_file_path):
-    """
-    Converts Eve's text response to a wav file using Piper TTS.
-    """
+    """Converts Eve's text response to a wav file using Piper TTS."""
     voice = PiperVoice.load(TTS_MODEL_PATH)
 
     with wave.open(output_file_path, "wb") as wav_file:
         voice.synthesize_wav(LLM_text_response, wav_file)
-        # 0.5s silence buffer to prevent audio cutoff
         sample_rate    = 22050
         silence_frames = int(sample_rate * 0.5)
         silence        = struct.pack('<' + 'h' * silence_frames, *([0] * silence_frames))
@@ -350,7 +345,6 @@ def main():
     print("-" * 50)
 
     pa = pyaudio.PyAudio()
-    # Reopen OWW stream for next wake word cycle
     stream = pa.open(
         rate=NATIVE_RATE,
         channels=1,
@@ -360,14 +354,18 @@ def main():
         frames_per_buffer=OWW_NATIVE_CHUNK
     )
 
+    last_wake_time = 0
+
     try:
         while True:
             # ── Wake word detection loop ──────────────────────────────────────
             raw        = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
-            audio      = resample_to_16k(raw)         # → 1280 samples @ 16kHz
+            audio      = resample_to_16k(raw)
             prediction = oww_model.predict(audio)
 
-            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD:
+            now = time.time()
+            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD and (now - last_wake_time) > WAKE_COOLDOWN_S:
+                last_wake_time = now
                 print(f"\nEve: Wake word detected!")
 
                 # ── VAD recording ─────────────────────────────────────────────
@@ -400,7 +398,7 @@ def main():
                 oww_model.reset()
 
                 # flush buffered audio before resuming detection
-                for _ in range(100):  # adjust as needed to clear buffer
+                for _ in range(10):
                     stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
 
                 # ── Pipeline ──────────────────────────────────────────────────
@@ -416,7 +414,7 @@ def main():
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
                         print("-" * 50)
-                        print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")  # ← add this
+                        print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
                         generate_tts_response(llm_response, OUTPUT_PATH)
                         # play_audio(OUTPUT_PATH)  # uncomment when speaker is wired
 
