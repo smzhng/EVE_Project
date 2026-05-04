@@ -63,7 +63,6 @@ OUTPUT_PATH        = "tts/speech_outputs/response.wav"
 AUDIO_DEVICE       = None    # MAX98357A via I2S — uses aplay hw:2,0
 SAMPLE_RATE        = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
 NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
-WAKE_COOLDOWN_S    = 3.0    # seconds to ignore wake word after each trigger
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 # Built-in options (no training needed):
@@ -362,16 +361,13 @@ def main():
     )
 
     try:
-        last_wake_time = 0
         while True:
             # ── Wake word detection loop ──────────────────────────────────────
             raw        = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
             audio      = resample_to_16k(raw)         # → 1280 samples @ 16kHz
             prediction = oww_model.predict(audio)
 
-            now = time.time()
-            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD and (now - last_wake_time) > WAKE_COOLDOWN_S:
-                last_wake_time = now
+            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD:
                 print(f"\nEve: Wake word detected!")
 
                 # ── VAD recording ─────────────────────────────────────────────
@@ -402,6 +398,10 @@ def main():
                     frames_per_buffer=OWW_NATIVE_CHUNK
                 )
                 oww_model.reset()
+
+                # flush buffered audio before resuming detection
+                for _ in range(10):
+                    stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
 
                 # ── Pipeline ──────────────────────────────────────────────────
                 if not audio_path:
