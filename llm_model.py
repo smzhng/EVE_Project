@@ -69,7 +69,9 @@ NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
 #   "hey_jarvis", "alexa", "hey_mycroft"
 # To use "hey_eve": train a custom model at github.com/dscripka/openWakeWord
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.9     # 0.0–1.0 — raise if too many false triggers
+WAKE_THRESHOLD     = 0.97    # 0.0–1.0 — high to reduce false triggers
+REQUIRED_HITS      = 3       # consecutive frames above threshold to confirm wake word
+NOISE_GATE         = 500     # ignore frames quieter than this energy level
 
 # ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3       # 0=least aggressive, 3=most aggressive (filters noise)
@@ -340,8 +342,8 @@ def main():
     print("Press Ctrl+C to shut down.")
     print("-" * 50)
 
-    pa     = pyaudio.PyAudio()
-    stream = pa.open(
+    pa            = pyaudio.PyAudio()
+    stream        = pa.open(
         rate=NATIVE_RATE,
         channels=1,
         format=pyaudio.paInt16,
@@ -349,15 +351,29 @@ def main():
         input_device_index=MIC_DEVICE,
         frames_per_buffer=OWW_NATIVE_CHUNK
     )
+    trigger_count = 0
 
     try:
         while True:
             # ── Wake word detection loop ──────────────────────────────────────
-            raw        = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
-            audio      = resample_to_16k(raw)
-            prediction = oww_model.predict(audio)
+            raw   = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
+            audio = resample_to_16k(raw)
 
-            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD:
+            # noise gate — ignore silent frames
+            if np.abs(audio).mean() < NOISE_GATE:
+                trigger_count = 0
+                continue
+
+            prediction = oww_model.predict(audio)
+            score      = prediction.get(WAKE_WORD, 0)
+
+            if score >= WAKE_THRESHOLD:
+                trigger_count += 1
+            else:
+                trigger_count = 0
+
+            if trigger_count >= REQUIRED_HITS:
+                trigger_count = 0
                 print(f"\nEve: Wake word detected!")
 
                 # ── VAD recording ─────────────────────────────────────────────
@@ -403,6 +419,7 @@ def main():
                     frames_per_buffer=OWW_NATIVE_CHUNK
                 )
                 oww_model.reset()
+                trigger_count = 0
                 print("-" * 50)
                 print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
 
