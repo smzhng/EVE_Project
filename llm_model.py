@@ -14,7 +14,7 @@ Run together with eyes:
     python3 main.py
 
 Dependencies:
-    sudo pip3 install ollama vosk sounddevice piper-tts numpy openwakeword webrtcvad pyaudio --break-system-packages
+    sudo pip3 install ollama vosk sounddevice piper-tts numpy openwakeword webrtcvad pyaudio scipy --break-system-packages
     ollama pull phi4-mini
 """
 
@@ -26,6 +26,7 @@ SetLogLevel(-1)
 import wave
 import json
 import time
+import math
 import struct
 import platform
 import subprocess
@@ -35,6 +36,7 @@ import sounddevice as sd
 import pyaudio
 import webrtcvad
 import ollama
+from scipy.signal import resample_poly
 from vosk import Model, KaldiRecognizer
 from piper import PiperVoice
 from openwakeword.model import Model as WakeModel
@@ -51,26 +53,42 @@ MIC_DEVICE = get_mic_device()
 print(f"Using mic device: {MIC_DEVICE}")
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
-RECORDING_PATH    = "stt/speech_inputs/live_input.wav"
-VOSK_MODEL_PATH   = "stt/vosk-model-small-en-us-0.15"
-TTS_MODEL_PATH    = "tts/en_US-libritts_r-medium.onnx"
-OUTPUT_PATH       = "tts/speech_outputs/response.wav"
-AUDIO_DEVICE      = None    # MAX98357A via I2S — uses aplay hw:2,0
-SAMPLE_RATE       = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
+RECORDING_PATH     = "stt/speech_inputs/live_input.wav"
+VOSK_MODEL_PATH    = "stt/vosk-model-small-en-us-0.15"
+TTS_MODEL_PATH     = "tts/en_US-libritts_r-medium.onnx"
+OUTPUT_PATH        = "tts/speech_outputs/response.wav"
+AUDIO_DEVICE       = None    # MAX98357A via I2S — uses aplay hw:2,0
+SAMPLE_RATE        = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
+NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 # Built-in options (no training needed):
 #   "hey_jarvis", "alexa", "hey_mycroft"
 # To use "hey_eve": train a custom model at github.com/dscripka/openWakeWord
-WAKE_WORD         = "hey_jarvis"
-WAKE_THRESHOLD    = 0.5     # 0.0–1.0 — raise if too many false triggers
+WAKE_WORD          = "hey_jarvis"
+WAKE_THRESHOLD     = 0.5     # 0.0–1.0 — raise if too many false triggers
 
 # ── VAD config ────────────────────────────────────────────────────────────────
-VAD_MODE          = 3       # 0=least aggressive, 3=most aggressive (filters noise)
-VAD_FRAME_MS      = 30      # ms per VAD frame — must be 10, 20, or 30
-VAD_FRAME_SAMPLES = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)  # 480 samples @ 16kHz
-VAD_PADDING_MS    = 500     # ms of silence buffer before cutting off recording
-VAD_MAX_RECORD_S  = 10      # hard cap — stops recording after this many seconds
+VAD_MODE           = 3       # 0=least aggressive, 3=most aggressive (filters noise)
+VAD_FRAME_MS       = 30      # ms per VAD frame — must be 10, 20, or 30
+VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)   # 480 samples @ 16kHz
+VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)   # 1323 samples @ 44100Hz
+VAD_PADDING_MS     = 500     # ms of silence before cutting off recording
+VAD_MAX_RECORD_S   = 10      # hard cap — stops recording after this many seconds
+
+# ── OpenWakeWord chunk sizes ───────────────────────────────────────────────────
+OWW_CHUNK          = 1280                                          # samples @ 16kHz
+OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)  # samples @ 44100Hz
+
+
+# ── RESAMPLE HELPER ───────────────────────────────────────────────────────────
+def resample_to_16k(audio_bytes):
+    """Resample raw int16 bytes from NATIVE_RATE to SAMPLE_RATE."""
+    audio     = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+    gcd       = math.gcd(SAMPLE_RATE, NATIVE_RATE)
+    up, down  = SAMPLE_RATE // gcd, NATIVE_RATE // gcd
+    resampled = resample_poly(audio, up, down).astype(np.int16)
+    return resampled
 
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
@@ -221,43 +239,42 @@ def generate_LLM_response(user_text_input):
 
 def record_with_vad(stream):
     """
-    Records audio from an already-open PyAudio stream using WebRTC VAD.
-    Starts capturing when speech is detected, stops when speech ends.
-    Saves result to RECORDING_PATH and returns the path (or None if nothing heard).
+    Records from a PyAudio stream at NATIVE_RATE using WebRTC VAD.
+    Resamples each frame to SAMPLE_RATE before VAD processing.
+    Saves 16kHz mono wav to RECORDING_PATH.
 
-    Input:  stream — open PyAudio stream at SAMPLE_RATE, mono, int16
+    Input:  stream — open PyAudio stream at NATIVE_RATE, mono, int16
     Output: RECORDING_PATH (str) if speech detected, None if silence
     """
     vad = webrtcvad.Vad(VAD_MODE)
 
-    # ring buffer holds recent frames to catch speech onset
-    padding_frames  = VAD_PADDING_MS // VAD_FRAME_MS
-    ring_buffer     = collections.deque(maxlen=padding_frames)
-    triggered       = False
-    voiced_frames   = []
-    max_frames      = int(VAD_MAX_RECORD_S * 1000 / VAD_FRAME_MS)
-    frame_count     = 0
+    padding_frames = VAD_PADDING_MS // VAD_FRAME_MS
+    ring_buffer    = collections.deque(maxlen=padding_frames)
+    triggered      = False
+    voiced_frames  = []   # stores resampled 16kHz frame bytes
+    max_frames     = int(VAD_MAX_RECORD_S * 1000 / VAD_FRAME_MS)
+    frame_count    = 0
 
     print("Eve: Listening...")
 
     while frame_count < max_frames:
-        raw = stream.read(VAD_FRAME_SAMPLES, exception_on_overflow=False)
+        raw          = stream.read(VAD_NATIVE_SAMPLES, exception_on_overflow=False)
+        resampled    = resample_to_16k(raw)       # → 480 samples @ 16kHz
+        frame_bytes  = resampled.tobytes()
         frame_count += 1
-        is_speech = vad.is_speech(raw, SAMPLE_RATE)
+        is_speech    = vad.is_speech(frame_bytes, SAMPLE_RATE)
 
         if not triggered:
-            ring_buffer.append((raw, is_speech))
-            # start recording if majority of ring buffer is speech
+            ring_buffer.append((frame_bytes, is_speech))
             num_voiced = sum(1 for _, speech in ring_buffer if speech)
             if num_voiced > 0.6 * ring_buffer.maxlen:
                 triggered = True
                 print("Eve: Speech detected, recording...")
-                voiced_frames.extend(frame for frame, _ in ring_buffer)
+                voiced_frames.extend(f for f, _ in ring_buffer)
                 ring_buffer.clear()
         else:
-            voiced_frames.append(raw)
-            ring_buffer.append((raw, is_speech))
-            # stop if ring buffer is mostly silence — speech has ended
+            voiced_frames.append(frame_bytes)
+            ring_buffer.append((frame_bytes, is_speech))
             num_unvoiced = sum(1 for _, speech in ring_buffer if not speech)
             if num_unvoiced > 0.9 * ring_buffer.maxlen:
                 print("Eve: Speech ended.")
@@ -266,10 +283,9 @@ def record_with_vad(stream):
     if not voiced_frames:
         return None
 
-    # save captured frames as wav
     with wave.open(RECORDING_PATH, 'wb') as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(2)  # int16 = 2 bytes
+        wf.setsampwidth(2)
         wf.setframerate(SAMPLE_RATE)
         wf.writeframes(b''.join(voiced_frames))
 
@@ -333,40 +349,37 @@ def main():
     print("Press Ctrl+C to shut down.")
     print("-" * 50)
 
-    # OpenWakeWord needs 80ms chunks at 16kHz = 1280 samples
-    OWW_CHUNK = 1280
-
     pa = pyaudio.PyAudio()
     stream = pa.open(
-        rate=SAMPLE_RATE,
+        rate=NATIVE_RATE,
         channels=1,
         format=pyaudio.paInt16,
         input=True,
         input_device_index=MIC_DEVICE,
-        frames_per_buffer=OWW_CHUNK
+        frames_per_buffer=OWW_NATIVE_CHUNK
     )
 
     try:
         while True:
             # ── Wake word detection loop ──────────────────────────────────────
-            raw   = stream.read(OWW_CHUNK, exception_on_overflow=False)
-            audio = np.frombuffer(raw, dtype=np.int16)
+            raw        = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
+            audio      = resample_to_16k(raw)         # → 1280 samples @ 16kHz
             prediction = oww_model.predict(audio)
 
             if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD:
                 print(f"\nEve: Wake word detected!")
 
                 # ── VAD recording ─────────────────────────────────────────────
-                # Swap stream to VAD-sized frames (480 samples per 30ms frame)
                 stream.stop_stream()
                 stream.close()
+
                 vad_stream = pa.open(
-                    rate=SAMPLE_RATE,
+                    rate=NATIVE_RATE,
                     channels=1,
                     format=pyaudio.paInt16,
                     input=True,
                     input_device_index=MIC_DEVICE,
-                    frames_per_buffer=VAD_FRAME_SAMPLES
+                    frames_per_buffer=VAD_NATIVE_SAMPLES
                 )
 
                 audio_path = record_with_vad(vad_stream)
@@ -376,12 +389,12 @@ def main():
 
                 # Reopen OWW stream for next wake word cycle
                 stream = pa.open(
-                    rate=SAMPLE_RATE,
+                    rate=NATIVE_RATE,
                     channels=1,
                     format=pyaudio.paInt16,
                     input=True,
                     input_device_index=MIC_DEVICE,
-                    frames_per_buffer=OWW_CHUNK
+                    frames_per_buffer=OWW_NATIVE_CHUNK
                 )
 
                 # ── Pipeline ──────────────────────────────────────────────────
