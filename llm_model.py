@@ -400,7 +400,7 @@ def main():
                 oww_model.reset()
 
                 # flush buffered audio before resuming detection
-                for _ in range(30):
+                for _ in range(100):  # adjust as needed to clear buffer
                     stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
 
                 # ── Pipeline ──────────────────────────────────────────────────
