@@ -65,25 +65,22 @@ SAMPLE_RATE        = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
 NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
 
 # ── Wake word config ──────────────────────────────────────────────────────────
-# Built-in options (no training needed):
-#   "hey_jarvis", "alexa", "hey_mycroft"
-# To use "hey_eve": train a custom model at github.com/dscripka/openWakeWord
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.3    # 0.0–1.0 — high to reduce false triggers
-REQUIRED_HITS      = 5       # consecutive frames above threshold to confirm wake word
-NOISE_GATE         = 0     # ignore frames quieter than this energy level
+WAKE_THRESHOLD     = 0.3     # detection sensitivity
+REQUIRED_HITS      = 3       # consecutive frames above threshold to confirm
+NOISE_GATE         = 0       # minimum audio energy — 0 disables gate
 
 # ── VAD config ────────────────────────────────────────────────────────────────
-VAD_MODE           = 3       # 0=least aggressive, 3=most aggressive (filters noise)
-VAD_FRAME_MS       = 30      # ms per VAD frame — must be 10, 20, or 30
-VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)   # 480 samples @ 16kHz
-VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)   # 1323 samples @ 44100Hz
-VAD_PADDING_MS     = 500     # ms of silence before cutting off recording
-VAD_MAX_RECORD_S   = 10      # hard cap — stops recording after this many seconds
+VAD_MODE           = 3
+VAD_FRAME_MS       = 30
+VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)
+VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)
+VAD_PADDING_MS     = 500
+VAD_MAX_RECORD_S   = 10
 
 # ── OpenWakeWord chunk sizes ───────────────────────────────────────────────────
-OWW_CHUNK          = 1280                                          # samples @ 16kHz
-OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)  # samples @ 44100Hz
+OWW_CHUNK          = 1280
+OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)
 
 
 # ── RESAMPLE HELPER ───────────────────────────────────────────────────────────
@@ -359,18 +356,17 @@ def main():
             raw   = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
             audio = resample_to_16k(raw)
 
-            # noise gate — ignore silent frames
-            if np.abs(audio).mean() < NOISE_GATE:
+            # noise gate — skip silent frames without blocking Ctrl+C
+            if NOISE_GATE > 0 and np.abs(audio).mean() < NOISE_GATE:
                 trigger_count = 0
-                continue
-
-            prediction = oww_model.predict(audio)
-            score      = prediction.get(WAKE_WORD, 0)
-
-            if score >= WAKE_THRESHOLD:
-                trigger_count += 1
             else:
-                trigger_count = 0
+                prediction = oww_model.predict(audio)
+                score      = prediction.get(WAKE_WORD, 0)
+
+                if score >= WAKE_THRESHOLD:
+                    trigger_count += 1
+                else:
+                    trigger_count = 0
 
             if trigger_count >= REQUIRED_HITS:
                 trigger_count = 0
