@@ -63,7 +63,6 @@ OUTPUT_PATH        = "tts/speech_outputs/response.wav"
 AUDIO_DEVICE       = None    # MAX98357A via I2S — uses aplay hw:2,0
 SAMPLE_RATE        = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
 NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
-WAKE_COOLDOWN_S    = 5.0     # seconds to ignore wake word after each trigger
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 # Built-in options (no training needed):
@@ -242,9 +241,6 @@ def record_with_vad(stream):
     Records from a PyAudio stream at NATIVE_RATE using WebRTC VAD.
     Resamples each frame to SAMPLE_RATE before VAD processing.
     Saves 16kHz mono wav to RECORDING_PATH.
-
-    Input:  stream — open PyAudio stream at NATIVE_RATE, mono, int16
-    Output: RECORDING_PATH (str) if speech detected, None if silence
     """
     vad = webrtcvad.Vad(VAD_MODE)
 
@@ -344,7 +340,7 @@ def main():
     print("Press Ctrl+C to shut down.")
     print("-" * 50)
 
-    pa = pyaudio.PyAudio()
+    pa     = pyaudio.PyAudio()
     stream = pa.open(
         rate=NATIVE_RATE,
         channels=1,
@@ -354,8 +350,6 @@ def main():
         frames_per_buffer=OWW_NATIVE_CHUNK
     )
 
-    last_wake_time = 0
-
     try:
         while True:
             # ── Wake word detection loop ──────────────────────────────────────
@@ -363,9 +357,7 @@ def main():
             audio      = resample_to_16k(raw)
             prediction = oww_model.predict(audio)
 
-            now = time.time()
-            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD and (now - last_wake_time) > WAKE_COOLDOWN_S:
-                last_wake_time = now
+            if prediction.get(WAKE_WORD, 0) >= WAKE_THRESHOLD:
                 print(f"\nEve: Wake word detected!")
 
                 # ── VAD recording ─────────────────────────────────────────────
@@ -386,18 +378,7 @@ def main():
                 vad_stream.stop_stream()
                 vad_stream.close()
 
-                # Reopen OWW stream for next wake word cycle
-                stream = pa.open(
-                    rate=NATIVE_RATE,
-                    channels=1,
-                    format=pyaudio.paInt16,
-                    input=True,
-                    input_device_index=MIC_DEVICE,
-                    frames_per_buffer=OWW_NATIVE_CHUNK
-                )
-                oww_model.reset()
-
-                # ── Pipeline ──────────────────────────────────────────────────
+                # ── Pipeline BEFORE reopening OWW stream ──────────────────────
                 if not audio_path:
                     print("Eve: ...")
                 else:
@@ -409,10 +390,21 @@ def main():
                     else:
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
-                        print("-" * 50)
-                        print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
                         generate_tts_response(llm_response, OUTPUT_PATH)
                         # play_audio(OUTPUT_PATH)  # uncomment when speaker is wired
+
+                # ── Reopen OWW stream AFTER pipeline completes ────────────────
+                stream = pa.open(
+                    rate=NATIVE_RATE,
+                    channels=1,
+                    format=pyaudio.paInt16,
+                    input=True,
+                    input_device_index=MIC_DEVICE,
+                    frames_per_buffer=OWW_NATIVE_CHUNK
+                )
+                oww_model.reset()
+                print("-" * 50)
+                print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
 
     except KeyboardInterrupt:
         print("\nEVE voice offline.")
