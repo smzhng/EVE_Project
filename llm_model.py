@@ -20,9 +20,11 @@ Dependencies:
 
 # ── IMPORTS ───────────────────────────────────────────────────────────────────
 import os
-os.environ["VOSK_LOG_LEVEL"] = "-1"  # suppress Vosk logs
-from vosk import Model, KaldiRecognizer, SetLogLevel
-SetLogLevel(-1)
+import warnings
+os.environ["VOSK_LOG_LEVEL"] = "-1"
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+warnings.filterwarnings("ignore")
+
 import wave
 import json
 import time
@@ -37,7 +39,8 @@ import pyaudio
 import webrtcvad
 import ollama
 from scipy.signal import resample_poly
-from vosk import Model, KaldiRecognizer
+from vosk import Model, KaldiRecognizer, SetLogLevel
+SetLogLevel(-1)
 from piper import PiperVoice
 from openwakeword.model import Model as WakeModel
 
