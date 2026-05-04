@@ -350,6 +350,7 @@ def main():
     print("-" * 50)
 
     pa = pyaudio.PyAudio()
+    # Reopen OWW stream for next wake word cycle
     stream = pa.open(
         rate=NATIVE_RATE,
         channels=1,
@@ -396,6 +397,7 @@ def main():
                     input_device_index=MIC_DEVICE,
                     frames_per_buffer=OWW_NATIVE_CHUNK
                 )
+                oww_model.reset()
 
                 # ── Pipeline ──────────────────────────────────────────────────
                 if not audio_path:
