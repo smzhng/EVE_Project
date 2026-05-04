@@ -226,6 +226,7 @@ def generate_LLM_response(user_text_input):
     start_time = time.time()
     response = ollama.chat(
         model='eve',
+        host='http://172.20.10.4:11434',
         messages=[{'role': 'user', 'content': user_text_input}],
         options={'temperature': 0.1}
     )
