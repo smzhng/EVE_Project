@@ -70,7 +70,7 @@ WAKE_COOLDOWN_S    = 5.0     # seconds to ignore wake word after each trigger
 #   "hey_jarvis", "alexa", "hey_mycroft"
 # To use "hey_eve": train a custom model at github.com/dscripka/openWakeWord
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.7     # 0.0–1.0 — raise if too many false triggers
+WAKE_THRESHOLD     = 0.9     # 0.0–1.0 — raise if too many false triggers
 
 # ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3       # 0=least aggressive, 3=most aggressive (filters noise)
