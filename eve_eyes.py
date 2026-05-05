@@ -23,17 +23,17 @@ Dependencies:
     sudo pip3 install pillow spidev lgpio --break-system-packages
 
 Eye states (sent via queue from llm_model.py):
-    idle    → normal random blinking
-    wake    → eyes snap open wide (wake word detected)
-    listen  → eyes stay open (recording speech)
+    closed  → eyes fully shut (startup + inactivity)
+    wake    → plays opening animation then switches to idle
+    listen  → eyes open, no blinking (recording speech)
     think   → eyes slightly squinted (LLM processing)
+    idle    → eyes open with normal blinking, 30s inactivity timer
 """
 
 import time
 import numpy as np
 import random
 import os, re
-from PIL import Image, ImageDraw
 
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -43,22 +43,19 @@ SCREEN_H  = 128
 SCLERA_W = 200
 SCLERA_H = 200
 
-EYE_Y_OFFSET = 4  # pixels — increase to shift left down / right up more
+EYE_Y_OFFSET = 4
 
-# Scroll position — center of sclera shown on screen
-SCLERA_X = (SCLERA_W - SCREEN_W) // 2   # = 36
-SCLERA_Y = (SCLERA_H - SCREEN_H) // 2   # = 36
+SCLERA_X = (SCLERA_W - SCREEN_W) // 2
+SCLERA_Y = (SCLERA_H - SCREEN_H) // 2
 
-# GPIO pin numbers (BCM)
 PIN_DC  = 25
 PIN_RST = 27
 
-# Blink timing
-BLINK_INTERVAL_MIN = 3.0
-BLINK_INTERVAL_MAX = 7.0
-FRAME_DELAY        = 0.04
+BLINK_INTERVAL_MIN  = 3.0
+BLINK_INTERVAL_MAX  = 7.0
+FRAME_DELAY         = 0.04
+INACTIVITY_TIMEOUT  = 30.0   # seconds before eyes close after last interaction
 
-# LAPTOP VERSION
 LAPTOP_MODE = os.environ.get('EVE_LAPTOP_MODE') == '1'
 if not LAPTOP_MODE:
     import lgpio
@@ -75,8 +72,8 @@ if not LAPTOP_MODE:
     spi2.max_speed_hz = 40000000
     spi2.mode = 0
 
-# ── LOAD EYE DATA FROM EveEye.h ───────────────────────────────────────────────
 
+# ── LOAD EYE DATA FROM EveEye.h ───────────────────────────────────────────────
 def load_eye_data():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     h_file = os.path.join(script_dir, 'EveEye.h')
@@ -90,7 +87,6 @@ def load_eye_data():
     with open(h_file, 'r') as f:
         content = f.read()
 
-    # ── Sclera (RGB565 → RGB888) ──────────────────────────────────────────────
     end = content.find('iris[')
     hex16 = re.findall(r'0x([0-9A-Fa-f]{4})', content[:end])
     def rgb565(v):
@@ -99,7 +95,6 @@ def load_eye_data():
     sclera_pixels = [rgb565(h) for h in hex16[:SCLERA_W * SCLERA_H]]
     sclera = np.array(sclera_pixels, dtype=np.uint8).reshape(SCLERA_H, SCLERA_W, 3)
 
-    # ── Eyelid masks (uint8) ──────────────────────────────────────────────────
     def extract_uint8_array(content, name):
         idx = content.find(f'const uint8_t {name}[SCREEN_HEIGHT][SCREEN_WIDTH]')
         if idx == -1:
@@ -115,6 +110,7 @@ def load_eye_data():
 
     print(f"Eye data loaded: sclera {sclera.shape}, upper {upper.shape}, lower {lower.shape}")
     return sclera, upper, lower
+
 
 # ── DISPLAY DRIVER ────────────────────────────────────────────────────────────
 def reset_display():
@@ -170,11 +166,9 @@ def show(spi, img):
     send_data(spi, data)
 
 
-# ── EYE RENDERER ───────────────────────────────────────────────────────────────
+# ── EYE RENDERER ──────────────────────────────────────────────────────────────
 def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip_v=False):
-    sy = SCLERA_Y
-    sx = SCLERA_X
-    sclera_crop = sclera[sy:sy+SCREEN_H, sx:sx+SCREEN_W].copy()
+    sclera_crop = sclera[SCLERA_Y:SCLERA_Y+SCREEN_H, SCLERA_X:SCLERA_X+SCREEN_W].copy()
 
     if flip_v:
         sclera_crop = sclera_crop[::-1, :, :]
@@ -183,10 +177,7 @@ def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip
         upper = np.roll(upper, y_offset, axis=0)
         lower = np.roll(lower, y_offset, axis=0)
 
-    upper_mask = upper <= uT
-    lower_mask = lower <= lT
-    eyelid_mask = upper_mask | lower_mask
-
+    eyelid_mask = (upper <= uT) | (lower <= lT)
     result = sclera_crop.copy()
     result[eyelid_mask] = [0, 0, 0]
 
@@ -200,7 +191,7 @@ def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip
     return result
 
 
-# ── ANIMATION STATES ──────────────────────────────────────────────────────────
+# ── EYE CONTROLLER ────────────────────────────────────────────────────────────
 class EveEyes:
     def __init__(self, sclera, upper, lower):
         self.sclera      = sclera
@@ -211,28 +202,50 @@ class EveEyes:
         self.blink_start = 0
         self.blink_dur   = 0
         self.next_blink  = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
-        self.state       = "idle"   # current eye state
+        self.state       = "closed"   # start closed, open on first wake word
+        self.last_active = None       # timestamp of last interaction
 
     def set_state(self, state):
-        """Set eye animation state from voice pipeline."""
+        """Called when voice pipeline sends a new eye state."""
         self.state = state
+        if state in ("wake", "listen", "think", "idle"):
+            self.last_active = time.time()
         if state == "wake":
-            # cancel any blink in progress — snap eyes open
             self.blink_state = 0
-            print(f"[Eyes] state → wake")
+            print("[Eyes] state → wake")
         elif state == "listen":
             self.blink_state = 0
-            print(f"[Eyes] state → listen")
+            print("[Eyes] state → listen")
         elif state == "think":
             self.blink_state = 0
-            print(f"[Eyes] state → think")
+            print("[Eyes] state → think")
         elif state == "idle":
             self.next_blink = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
-            print(f"[Eyes] state → idle")
+            print("[Eyes] state → idle")
+        elif state == "closed":
+            self.blink_state = 0
+            print("[Eyes] state → closed")
 
-    def set_combat_mode(self, active):
-        self.combat_mode = active
-        print(f"Eve eyes: {'COMBAT MODE' if active else 'normal mode'}")
+    def _show_frame(self, uT, lT):
+        """Render and display one frame."""
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
+        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=False)
+        show(spi1, frame_left)
+        show(spi2, frame_right[:, ::-1, :])
+
+    def _play_open_animation(self):
+        """Eyes open from closed — fade in then double blink."""
+        # fade open
+        for i in range(11):
+            uT = int((1.0 - i / 10.0) * 254)
+            self._show_frame(uT, 0)
+            time.sleep(0.06)
+
+        # double blink
+        for _ in range(2):
+            for uT in [0, 254, 0]:
+                self._show_frame(uT, 0)
+                time.sleep(0.08)
 
     def update(self, eye_queue=None):
         now = time.time()
@@ -246,28 +259,41 @@ class EveEyes:
                 except:
                     pass
 
-        # ── State-based eyelid thresholds ─────────────────────────────────────
-        if self.state == "wake":
-            # eyes wide open — alert
-            uT = 0
-            lT = 0
+        # inactivity timeout — close eyes after 30s of idle
+        if self.state == "idle" and self.last_active is not None:
+            if now - self.last_active > INACTIVITY_TIMEOUT:
+                print("[Eyes] inactivity timeout → closed")
+                self.state = "closed"
+                self.blink_state = 0
+
+        # ── State rendering ───────────────────────────────────────────────────
+        if self.state == "closed":
+            # eyes fully shut
+            self._show_frame(254, 254)
+            time.sleep(FRAME_DELAY)
+
+        elif self.state == "wake":
+            # play opening animation then go to idle
+            self._play_open_animation()
+            self.state = "idle"
+            self.last_active = time.time()
+            self.next_blink  = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
 
         elif self.state == "listen":
             # eyes open, attentive
-            uT = 0
-            lT = 0
+            self._show_frame(0, 0)
+            time.sleep(FRAME_DELAY)
 
         elif self.state == "think":
             # eyes slightly squinted
-            uT = 40
-            lT = 40
+            self._show_frame(40, 40)
+            time.sleep(FRAME_DELAY)
 
         else:
             # idle — normal blinking
             uT = 0
             lT = 0
 
-            # trigger blink
             if self.blink_state == 0 and now >= self.next_blink:
                 self.blink_state = 1
                 self.blink_start = now
@@ -276,8 +302,8 @@ class EveEyes:
 
             if self.blink_state > 0:
                 elapsed = now - self.blink_start
-                s = min(1.0, elapsed / self.blink_dur)
-                s_int = int(s * 255)
+                s       = min(1.0, elapsed / self.blink_dur)
+                s_int   = int(s * 255)
 
                 if self.blink_state == 2:
                     s_int = 1 + s_int
@@ -285,7 +311,7 @@ class EveEyes:
                     s_int = 256 - s_int
 
                 uT = (0 * s_int + 254 * (257 - s_int)) // 256
-                lT = (0 * s_int + 254 * (257 - s_int)) // 256
+                lT = uT
 
                 if elapsed >= self.blink_dur:
                     if self.blink_state == 1:
@@ -296,33 +322,8 @@ class EveEyes:
                         self.blink_state = 0
                         self.next_blink  = now + self.orig_dur * 3 + random.uniform(0, 4)
 
-        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
-        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=False)
-        show(spi1, frame_left)
-        show(spi2, frame_right[:, ::-1, :])
-        time.sleep(FRAME_DELAY)
-
-
-# ── STARTUP ANIMATION ─────────────────────────────────────────────────────────
-def startup_animation(sclera, upper, lower):
-    print("EVE boot sequence...")
-
-    for i in range(11):
-        uT = int((1.0 - i / 10.0) * 254)
-        frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=True)
-        frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=False)
-        show(spi1, frame_left)
-        show(spi2, frame_right[:, ::-1, :])
-        time.sleep(0.06)
-
-    for _ in range(2):
-        for uT in [0, 254, 0]:
-            frame_left  = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=True)
-            frame_right = render_eye(sclera, upper, lower, uT, 0, y_offset=-EYE_Y_OFFSET, flip_v=False)
-            show(spi1, frame_left)
-            show(spi2, frame_right[:, ::-1, :])
-            time.sleep(0.08)
-    print("EVE eyes online.")
+            self._show_frame(uT, lT)
+            time.sleep(FRAME_DELAY)
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
@@ -337,18 +338,15 @@ def main(eye_queue=None):
         init_display(spi2)
         print("Displays initialized.")
 
-    startup_animation(sclera, upper, lower)
-
     eyes = EveEyes(sclera, upper, lower)
-
-    print("Eye animation running. Press Ctrl+C to stop.")
+    print("EVE eyes online. Waiting for wake word...")
 
     try:
         while True:
             eyes.update(eye_queue)
 
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\nShutting down eyes...")
         black = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
         if not LAPTOP_MODE:
             show(spi1, black)
@@ -357,6 +355,7 @@ def main(eye_queue=None):
             spi2.close()
             lgpio.gpiochip_close(h)
         print("EVE eyes offline.")
+
 
 # ── RUN STANDALONE ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
