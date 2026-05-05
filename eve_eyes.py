@@ -236,16 +236,17 @@ class EveEyes:
 
     def _play_open_animation(self):
         """Eyes open from closed — fade in then double blink."""
-        # fade open
+        # fade open — both lids open together
         for i in range(11):
             uT = int((1.0 - i / 10.0) * 254)
-            self._show_frame(uT, 0)
+            lT = uT  # both lids animate together
+            self._show_frame(uT, lT)
             time.sleep(0.06)
 
         # double blink
         for _ in range(2):
             for uT in [0, 254, 0]:
-                self._show_frame(uT, 0)
+                self._show_frame(uT, uT)
                 time.sleep(0.08)
 
     def update(self, eye_queue=None):
