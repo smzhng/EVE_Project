@@ -362,7 +362,10 @@ def main():
 
                 if score >= WAKE_THRESHOLD:
                     trigger_count += 1
+                    print(f"[OWW] score={score:.3f} hit={trigger_count}/{REQUIRED_HITS}")
                 else:
+                    if score > 0.1:
+                        print(f"[OWW] score={score:.3f} (below threshold)")
                     trigger_count = 0
 
             if trigger_count >= REQUIRED_HITS:
