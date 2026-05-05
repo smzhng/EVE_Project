@@ -236,13 +236,6 @@ def generate_LLM_response(user_text_input):
 
 
 def record_with_vad():
-    """
-    Records audio using sounddevice at SAMPLE_RATE (16kHz) with WebRTC VAD.
-    sounddevice handles resampling cleanly — no artifacts.
-    Saves 16kHz mono wav to RECORDING_PATH.
-
-    Output: RECORDING_PATH (str) if speech detected, None if silence
-    """
     vad = webrtcvad.Vad(VAD_MODE)
 
     padding_frames = VAD_PADDING_MS // VAD_FRAME_MS
@@ -254,12 +247,12 @@ def record_with_vad():
 
     print("Eve: Listening...")
 
-    # sounddevice records at 16kHz directly — clean audio, no resampling artifacts
-    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='int16',
-                        device=MIC_DEVICE, blocksize=VAD_FRAME_SAMPLES) as mic:
+    with sd.InputStream(samplerate=NATIVE_RATE, channels=1, dtype='int16',
+                        device=MIC_DEVICE, blocksize=VAD_NATIVE_SAMPLES) as mic:
         while frame_count < max_frames:
-            raw, _ = mic.read(VAD_FRAME_SAMPLES)
-            frame_bytes  = raw.tobytes()
+            raw, _       = mic.read(VAD_NATIVE_SAMPLES)
+            resampled    = resample_to_16k(raw.tobytes())
+            frame_bytes  = resampled.tobytes()
             frame_count += 1
             is_speech    = vad.is_speech(frame_bytes, SAMPLE_RATE)
 
