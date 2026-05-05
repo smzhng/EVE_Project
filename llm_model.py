@@ -219,7 +219,7 @@ print("Wake word model loaded.")
 
 def generate_LLM_response(user_text_input):
     start_time = time.time()
-    client = ollama.Client(host='http://172.20.10.4:11434')
+    client = ollama.Client(host='http://10.0.0.100:11434')
     response = client.chat(
         model='eve',
         messages=[{'role': 'user', 'content': user_text_input}],
