@@ -57,7 +57,7 @@ print(f"Using mic device: {MIC_DEVICE}")
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 RECORDING_PATH     = "stt/speech_inputs/live_input.wav"
-VOSK_MODEL_PATH    = "stt/vosk-model-small-en-us-0.15"
+VOSK_MODEL_PATH    = "stt/vosk-model-en-us-0.22-lgraph"
 TTS_MODEL_PATH     = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH        = "tts/speech_outputs/response.wav"
 AUDIO_DEVICE       = None    # MAX98357A via I2S — uses aplay hw:2,0
