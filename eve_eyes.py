@@ -228,7 +228,8 @@ class EveEyes:
 
     def _show_frame(self, uT, lT):
         """Render and display one frame."""
-        frame_left  = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
+        # left display is flipped — swap upper/lower so animation appears symmetric
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, lT, uT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
         frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=False)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
@@ -250,14 +251,13 @@ class EveEyes:
     def update(self, eye_queue=None):
         now = time.time()
 
-        # check for new state from voice pipeline
-        if eye_queue is not None:
-            while not eye_queue.empty():
-                try:
-                    new_state = eye_queue.get_nowait()
-                    self.set_state(new_state)
-                except:
-                    pass
+        # check for new state — only read one per frame
+        if eye_queue is not None and not eye_queue.empty():
+            try:
+                new_state = eye_queue.get_nowait()
+                self.set_state(new_state)
+            except:
+                pass
 
         # inactivity timeout — close eyes after 30s of idle
         if self.state == "idle" and self.last_active is not None:
