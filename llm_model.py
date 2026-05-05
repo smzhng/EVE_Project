@@ -66,8 +66,8 @@ NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.3     # detection sensitivity
-REQUIRED_HITS      = 3       # consecutive frames above threshold to confirm
+WAKE_THRESHOLD     = 0.5     # detection sensitivity
+REQUIRED_HITS      = 5       # consecutive frames above threshold to confirm
 NOISE_GATE         = 0       # minimum audio energy — 0 disables gate
 
 # ── VAD config ────────────────────────────────────────────────────────────────
