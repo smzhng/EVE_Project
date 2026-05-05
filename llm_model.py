@@ -73,8 +73,8 @@ NOISE_GATE         = 0       # minimum audio energy — 0 disables gate
 # ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3
 VAD_FRAME_MS       = 30
-VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)
-VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)
+VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)   # 480 samples @ 16kHz
+VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)   # 1323 samples @ 44100Hz
 VAD_PADDING_MS     = 500
 VAD_MAX_RECORD_S   = 10
 
@@ -83,7 +83,7 @@ OWW_CHUNK          = 1280
 OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)
 
 
-# ── RESAMPLE HELPER ───────────────────────────────────────────────────────────
+# ── RESAMPLE HELPER (used only for OWW wake word detection) ──────────────────
 def resample_to_16k(audio_bytes):
     """Resample raw int16 bytes from NATIVE_RATE to SAMPLE_RATE."""
     audio     = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
@@ -235,11 +235,13 @@ def generate_LLM_response(user_text_input):
     return llm_response
 
 
-def record_with_vad(stream):
+def record_with_vad():
     """
-    Records from a PyAudio stream at NATIVE_RATE using WebRTC VAD.
-    Resamples each frame to SAMPLE_RATE before VAD processing.
+    Records audio using sounddevice at SAMPLE_RATE (16kHz) with WebRTC VAD.
+    sounddevice handles resampling cleanly — no artifacts.
     Saves 16kHz mono wav to RECORDING_PATH.
+
+    Output: RECORDING_PATH (str) if speech detected, None if silence
     """
     vad = webrtcvad.Vad(VAD_MODE)
 
@@ -252,28 +254,30 @@ def record_with_vad(stream):
 
     print("Eve: Listening...")
 
-    while frame_count < max_frames:
-        raw          = stream.read(VAD_NATIVE_SAMPLES, exception_on_overflow=False)
-        resampled    = resample_to_16k(raw)
-        frame_bytes  = resampled.tobytes()
-        frame_count += 1
-        is_speech    = vad.is_speech(frame_bytes, SAMPLE_RATE)
+    # sounddevice records at 16kHz directly — clean audio, no resampling artifacts
+    with sd.InputStream(samplerate=SAMPLE_RATE, channels=1, dtype='int16',
+                        device=MIC_DEVICE, blocksize=VAD_FRAME_SAMPLES) as mic:
+        while frame_count < max_frames:
+            raw, _ = mic.read(VAD_FRAME_SAMPLES)
+            frame_bytes  = raw.tobytes()
+            frame_count += 1
+            is_speech    = vad.is_speech(frame_bytes, SAMPLE_RATE)
 
-        if not triggered:
-            ring_buffer.append((frame_bytes, is_speech))
-            num_voiced = sum(1 for _, speech in ring_buffer if speech)
-            if num_voiced > 0.6 * ring_buffer.maxlen:
-                triggered = True
-                print("Eve: Speech detected, recording...")
-                voiced_frames.extend(f for f, _ in ring_buffer)
-                ring_buffer.clear()
-        else:
-            voiced_frames.append(frame_bytes)
-            ring_buffer.append((frame_bytes, is_speech))
-            num_unvoiced = sum(1 for _, speech in ring_buffer if not speech)
-            if num_unvoiced > 0.9 * ring_buffer.maxlen:
-                print("Eve: Speech ended.")
-                break
+            if not triggered:
+                ring_buffer.append((frame_bytes, is_speech))
+                num_voiced = sum(1 for _, speech in ring_buffer if speech)
+                if num_voiced > 0.6 * ring_buffer.maxlen:
+                    triggered = True
+                    print("Eve: Speech detected, recording...")
+                    voiced_frames.extend(f for f, _ in ring_buffer)
+                    ring_buffer.clear()
+            else:
+                voiced_frames.append(frame_bytes)
+                ring_buffer.append((frame_bytes, is_speech))
+                num_unvoiced = sum(1 for _, speech in ring_buffer if not speech)
+                if num_unvoiced > 0.9 * ring_buffer.maxlen:
+                    print("Eve: Speech ended.")
+                    break
 
     if not voiced_frames:
         return None
@@ -352,7 +356,7 @@ def main():
 
     try:
         while True:
-            # ── Wake word detection loop ──────────────────────────────────────
+            # ── Wake word detection loop (PyAudio @ 44100Hz → resample) ──────
             raw   = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
             audio = resample_to_16k(raw)
 
@@ -372,23 +376,11 @@ def main():
                 trigger_count = 0
                 print(f"\nEve: Wake word detected!")
 
-                # ── VAD recording ─────────────────────────────────────────────
+                # ── Close PyAudio stream, use sounddevice for clean VAD ───────
                 stream.stop_stream()
                 stream.close()
 
-                vad_stream = pa.open(
-                    rate=NATIVE_RATE,
-                    channels=1,
-                    format=pyaudio.paInt16,
-                    input=True,
-                    input_device_index=MIC_DEVICE,
-                    frames_per_buffer=VAD_NATIVE_SAMPLES
-                )
-
-                audio_path = record_with_vad(vad_stream)
-
-                vad_stream.stop_stream()
-                vad_stream.close()
+                audio_path = record_with_vad()  # sounddevice @ 16kHz — no artifacts
 
                 # ── Pipeline BEFORE reopening OWW stream ──────────────────────
                 if not audio_path:
