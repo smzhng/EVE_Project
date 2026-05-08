@@ -49,11 +49,11 @@ PULSE_MIN    = 500
 PULSE_MAX    = 2500
 
 # Named positions
-ARM_DOWN     = 10
-ARM_UP       = 170
+ARM_DOWN     = 0
+ARM_UP       = 180
 ARM_HALF     = 90
-EXTEND_IN    = 10
-EXTEND_OUT   = 90
+EXTEND_IN    = 0
+EXTEND_OUT   = 180
 HEAD_LEFT    = 20
 HEAD_CENTER  = 90
 HEAD_RIGHT   = 160
