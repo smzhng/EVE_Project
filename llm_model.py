@@ -10,7 +10,7 @@ Pipeline:
 Run standalone:
     python3 llm_model.py
 
-Run together with eyes + servos:
+Run together with eyes + servos + idle:
     sudo python3 main.py
 
 Dependencies:
@@ -64,7 +64,10 @@ AUDIO_DEVICE       = None
 SAMPLE_RATE        = 16000
 NATIVE_RATE        = 44100
 
-WAKE_WORD          = "hey_jarvis"
+# ── Wake word config ──────────────────────────────────────────────────────────
+# Switch to "okay_eve" once model is downloaded and placed in models/ folder
+# WAKE_WORD = "okay_eve"  # ← uncomment when ready
+WAKE_WORD          = "hey_jarvis"   # current fallback
 WAKE_THRESHOLD     = 0.5
 REQUIRED_HITS      = 5
 NOISE_GATE         = 0
@@ -89,7 +92,6 @@ def resample_to_16k(audio_bytes):
     return resampled
 
 def parse_emotion(llm_response):
-    """Extract emotion tag from Eve's response e.g. [suspicious]."""
     match = re.search(r'\[(\w+)\]', llm_response)
     if match:
         return match.group(1).lower()
@@ -102,6 +104,10 @@ def send_eye_state(eye_queue, state):
 def send_servo_state(servo_queue, state):
     if servo_queue is not None:
         servo_queue.put(state)
+
+def send_idle_state(idle_queue, state):
+    if idle_queue is not None:
+        idle_queue.put(state)
 
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
@@ -332,7 +338,7 @@ def play_audio(file_path):
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def main(eye_queue=None, servo_queue=None):
+def main(eye_queue=None, servo_queue=None, idle_queue=None):
     print("EVE voice pipeline online.")
     print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
     print("Press Ctrl+C to shut down.")
@@ -371,24 +377,25 @@ def main(eye_queue=None, servo_queue=None):
                 trigger_count = 0
                 print(f"\nEve: Wake word detected!")
 
-                # ── Wake — eyes open, arms extend ────────────────────────────
+                # ── Wake ──────────────────────────────────────────────────────
                 send_eye_state(eye_queue, "wake")
                 send_servo_state(servo_queue, "wake")
+                send_idle_state(idle_queue, "awake")   # start idle animations
 
                 stream.stop_stream()
                 stream.close()
 
-                # ── Listen state ──────────────────────────────────────────────
+                # ── Listen ────────────────────────────────────────────────────
                 send_eye_state(eye_queue, "listen")
                 send_servo_state(servo_queue, "listen")
+                send_idle_state(idle_queue, "busy")    # pause idle during listen
 
                 audio_path = record_with_vad()
 
                 if not audio_path:
                     print("Eve: ...")
-                    # nothing heard — eyes go idle, arms stay extended
                     send_eye_state(eye_queue, "idle")
-                    # NOTE: no servo idle here — arms stay out waiting for next input
+                    send_idle_state(idle_queue, "reset")  # back to idle anims
                 else:
                     user_text_input = transcribe_audio(audio_path)
                     print(f"You said: {user_text_input}")
@@ -396,11 +403,12 @@ def main(eye_queue=None, servo_queue=None):
                     if not user_text_input:
                         print("Eve: ...")
                         send_eye_state(eye_queue, "idle")
-                        # arms stay extended
+                        send_idle_state(idle_queue, "reset")
                     else:
                         # ── Think ─────────────────────────────────────────────
                         send_eye_state(eye_queue, "think")
                         send_servo_state(servo_queue, "think")
+                        send_idle_state(idle_queue, "busy")
 
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
@@ -413,10 +421,9 @@ def main(eye_queue=None, servo_queue=None):
                         generate_tts_response(llm_response, OUTPUT_PATH)
                         # play_audio(OUTPUT_PATH)  # uncomment when speaker wired
 
-                        # eyes go idle, arms STAY EXTENDED waiting for next input
+                        # back to idle — arms stay extended, idle anims resume
                         send_eye_state(eye_queue, "idle")
-                        # servo stays in last emotion pose — no idle sent here
-                        # arms only retract when eye inactivity timeout fires (eve_eyes.py)
+                        send_idle_state(idle_queue, "reset")
 
                 # ── Reopen OWW stream ─────────────────────────────────────────
                 stream = pa.open(

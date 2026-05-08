@@ -4,15 +4,15 @@ eve_eyes.py
 -----------
 Animated eye display for EVE (Wall-E) using two Waveshare 1.5inch RGB OLED modules.
 
-Eye states (sent via queue from llm_model.py):
-    closed  → eyes fully shut (startup + inactivity)
-    wake    → plays opening animation then switches to idle
-    listen  → eyes open, no blinking (recording speech)
-    think   → eyes slightly squinted (LLM processing)
-    idle    → eyes open with normal blinking, 30s inactivity timer
+Eye states:
+    closed     → eyes fully shut (power down)
+    wake       → opening animation then idle
+    listen     → eyes open, no blinking
+    think      → eyes slightly squinted
+    idle       → normal blinking
+    idle_look  → slow sclera pan left/right (idle animation from idle_manager)
 
-When inactivity timeout fires, also sends "idle" to servo_queue
-so arms retract at the same time eyes close.
+When power down inactivity fires (10min), signals servo_queue to retract arms.
 """
 
 import time
@@ -24,22 +24,18 @@ import os, re
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SCREEN_W  = 128
 SCREEN_H  = 128
-
-SCLERA_W = 200
-SCLERA_H = 200
-
+SCLERA_W  = 200
+SCLERA_H  = 200
 EYE_Y_OFFSET = 4
-
-SCLERA_X = (SCLERA_W - SCREEN_W) // 2
-SCLERA_Y = (SCLERA_H - SCREEN_H) // 2
-
-PIN_DC  = 25
-PIN_RST = 27
+SCLERA_X  = (SCLERA_W - SCREEN_W) // 2
+SCLERA_Y  = (SCLERA_H - SCREEN_H) // 2
+PIN_DC    = 25
+PIN_RST   = 27
 
 BLINK_INTERVAL_MIN  = 3.0
 BLINK_INTERVAL_MAX  = 7.0
 FRAME_DELAY         = 0.04
-INACTIVITY_TIMEOUT  = 30.0
+POWERDOWN_TIMEOUT   = 600.0   # 10 minutes
 
 LAPTOP_MODE = os.environ.get('EVE_LAPTOP_MODE') == '1'
 if not LAPTOP_MODE:
@@ -48,27 +44,18 @@ if not LAPTOP_MODE:
     h = lgpio.gpiochip_open(0)
     lgpio.gpio_claim_output(h, PIN_DC)
     lgpio.gpio_claim_output(h, PIN_RST)
-    spi1 = spidev.SpiDev()
-    spi1.open(0, 0)
-    spi1.max_speed_hz = 40000000
-    spi1.mode = 0
-    spi2 = spidev.SpiDev()
-    spi2.open(0, 1)
-    spi2.max_speed_hz = 40000000
-    spi2.mode = 0
+    spi1 = spidev.SpiDev(); spi1.open(0, 0); spi1.max_speed_hz = 40000000; spi1.mode = 0
+    spi2 = spidev.SpiDev(); spi2.open(0, 1); spi2.max_speed_hz = 40000000; spi2.mode = 0
 
 
 # ── LOAD EYE DATA ─────────────────────────────────────────────────────────────
 def load_eye_data():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     h_file = os.path.join(script_dir, 'EveEye.h')
-
     if not os.path.exists(h_file):
         raise FileNotFoundError(f"EveEye.h not found at {h_file}")
-
     with open(h_file, 'r') as f:
         content = f.read()
-
     end = content.find('iris[')
     hex16 = re.findall(r'0x([0-9A-Fa-f]{4})', content[:end])
     def rgb565(v):
@@ -76,17 +63,12 @@ def load_eye_data():
         return ((v >> 11) & 0x1F) << 3, ((v >> 5) & 0x3F) << 2, (v & 0x1F) << 3
     sclera_pixels = [rgb565(h) for h in hex16[:SCLERA_W * SCLERA_H]]
     sclera = np.array(sclera_pixels, dtype=np.uint8).reshape(SCLERA_H, SCLERA_W, 3)
-
     def extract_uint8_array(content, name):
         idx = content.find(f'const uint8_t {name}[SCREEN_HEIGHT][SCREEN_WIDTH]')
-        if idx == -1:
-            return None
-        bs = content.find('{', idx)
-        be = content.find('};', bs)
+        if idx == -1: return None
+        bs = content.find('{', idx); be = content.find('};', bs)
         vals = re.findall(r'0x([0-9A-Fa-f]{2})', content[bs:be])
-        return np.array([int(v, 16) for v in vals[:SCREEN_W * SCREEN_H]],
-                        dtype=np.uint8).reshape(SCREEN_H, SCREEN_W)
-
+        return np.array([int(v, 16) for v in vals[:SCREEN_W * SCREEN_H]], dtype=np.uint8).reshape(SCREEN_H, SCREEN_W)
     upper = extract_uint8_array(content, 'upper')
     lower = extract_uint8_array(content, 'lower')
     print(f"Eye data loaded: sclera {sclera.shape}, upper {upper.shape}, lower {lower.shape}")
@@ -100,14 +82,11 @@ def reset_display():
     lgpio.gpio_write(h, PIN_RST, 1); time.sleep(0.1)
 
 def send_command(spi, cmd):
-    lgpio.gpio_write(h, PIN_DC, 0)
-    spi.writebytes([cmd])
+    lgpio.gpio_write(h, PIN_DC, 0); spi.writebytes([cmd])
 
 def send_data(spi, data):
     lgpio.gpio_write(h, PIN_DC, 1)
-    chunk = 4096
-    for i in range(0, len(data), chunk):
-        spi.writebytes(data[i:i+chunk])
+    for i in range(0, len(data), 4096): spi.writebytes(data[i:i+4096])
 
 def init_display(spi):
     send_command(spi, 0xFD); send_data(spi, [0x12])
@@ -132,8 +111,7 @@ def init_display(spi):
     send_command(spi, 0xAF)
 
 def show(spi, img):
-    if LAPTOP_MODE:
-        return
+    if LAPTOP_MODE: return
     send_command(spi, 0x15); send_data(spi, [0x00, 0x7F])
     send_command(spi, 0x75); send_data(spi, [0x00, 0x7F])
     send_command(spi, 0x5C)
@@ -143,13 +121,14 @@ def show(spi, img):
     rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
     high = (rgb565 >> 8).astype(np.uint8).flatten().tolist()
     low  = (rgb565 & 0xFF).astype(np.uint8).flatten().tolist()
-    data = [val for pair in zip(high, low) for val in pair]
-    send_data(spi, data)
+    send_data(spi, [val for pair in zip(high, low) for val in pair])
 
 
 # ── EYE RENDERER ──────────────────────────────────────────────────────────────
-def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip_v=False):
-    sclera_crop = sclera[SCLERA_Y:SCLERA_Y+SCREEN_H, SCLERA_X:SCLERA_X+SCREEN_W].copy()
+def render_eye(sclera, upper, lower, uT, lT, y_offset=0, x_offset=0, flip_v=False):
+    sy = SCLERA_Y
+    sx = max(0, min(SCLERA_W - SCREEN_W, SCLERA_X + x_offset))
+    sclera_crop = sclera[sy:sy+SCREEN_H, sx:sx+SCREEN_W].copy()
     if flip_v:
         sclera_crop = sclera_crop[::-1, :, :]
     if y_offset != 0:
@@ -158,12 +137,6 @@ def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip
     eyelid_mask = (upper <= uT) | (lower <= lT)
     result = sclera_crop.copy()
     result[eyelid_mask] = [0, 0, 0]
-    if combat_mode:
-        b_dominant = (result[:,:,2] > result[:,:,0]) & (result[:,:,2] > 50)
-        r_ch = result[:,:,2].copy()
-        result[b_dominant, 0] = r_ch[b_dominant]
-        result[b_dominant, 2] = 0
-        result[b_dominant, 1] = (result[b_dominant,1] * 0.3).astype(np.uint8)
     return result
 
 
@@ -173,17 +146,17 @@ class EveEyes:
         self.sclera      = sclera
         self.upper       = upper
         self.lower       = lower
-        self.combat_mode = False
         self.blink_state = 0
         self.blink_start = 0
         self.blink_dur   = 0
         self.next_blink  = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
         self.state       = "closed"
         self.last_active = None
+        self.x_offset    = 0   # for idle eye look animation
 
     def set_state(self, state):
         self.state = state
-        if state in ("wake", "listen", "think", "idle"):
+        if state in ("wake", "listen", "think", "idle", "idle_look"):
             self.last_active = time.time()
         if state == "wake":
             self.blink_state = 0
@@ -197,13 +170,15 @@ class EveEyes:
         elif state == "idle":
             self.next_blink = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
             print("[Eyes] state → idle")
+        elif state == "idle_look":
+            print("[Eyes] state → idle_look")
         elif state == "closed":
             self.blink_state = 0
             print("[Eyes] state → closed")
 
-    def _show_frame(self, uT, lT):
-        frame_left  = render_eye(self.sclera, self.upper, self.lower, lT, uT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
-        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=False)
+    def _show_frame(self, uT, lT, x_offset=0):
+        frame_left  = render_eye(self.sclera, self.upper, self.lower, lT, uT, y_offset=-EYE_Y_OFFSET, x_offset=-x_offset, flip_v=True)
+        frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, y_offset=-EYE_Y_OFFSET, x_offset=x_offset,  flip_v=False)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
 
@@ -217,10 +192,34 @@ class EveEyes:
                 self._show_frame(uT, uT)
                 time.sleep(0.08)
 
+    def _play_idle_look(self):
+        """Eyes pan left then right then back to center."""
+        max_offset = 20
+        # look left
+        for i in range(11):
+            self.x_offset = int(-max_offset * i / 10)
+            self._show_frame(0, 0, self.x_offset)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        # look right
+        for i in range(11):
+            self.x_offset = int(max_offset * i / 10)
+            self._show_frame(0, 0, self.x_offset)
+            time.sleep(0.05)
+        time.sleep(0.3)
+        # back to center
+        for i in range(11):
+            self.x_offset = int(max_offset * (1.0 - i / 10))
+            self._show_frame(0, 0, self.x_offset)
+            time.sleep(0.05)
+        self.x_offset = 0
+        # go back to idle blinking
+        self.state = "idle"
+        self.next_blink = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
+
     def update(self, eye_queue=None, servo_queue=None):
         now = time.time()
 
-        # check for new state
         if eye_queue is not None and not eye_queue.empty():
             try:
                 new_state = eye_queue.get_nowait()
@@ -228,15 +227,14 @@ class EveEyes:
             except:
                 pass
 
-        # inactivity timeout — close eyes AND retract arms
+        # power down after 10 minutes
         if self.state == "idle" and self.last_active is not None:
-            if now - self.last_active > INACTIVITY_TIMEOUT:
-                print("[Eyes] inactivity timeout → closed")
+            if now - self.last_active > POWERDOWN_TIMEOUT:
+                print("[Eyes] 10min inactivity → power down")
                 self.state = "closed"
                 self.blink_state = 0
-                # signal servos to retract
                 if servo_queue is not None:
-                    servo_queue.put("idle")
+                    servo_queue.put("idle")  # retract arms
 
         # ── State rendering ───────────────────────────────────────────────────
         if self.state == "closed":
@@ -256,6 +254,9 @@ class EveEyes:
         elif self.state == "think":
             self._show_frame(40, 40)
             time.sleep(FRAME_DELAY)
+
+        elif self.state == "idle_look":
+            self._play_idle_look()
 
         else:
             # idle — normal blinking
@@ -309,15 +310,12 @@ def main(eye_queue=None, servo_queue=None):
     try:
         while True:
             eyes.update(eye_queue, servo_queue)
-
     except KeyboardInterrupt:
         print("\nShutting down eyes...")
         black = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)
         if not LAPTOP_MODE:
-            show(spi1, black)
-            show(spi2, black)
-            spi1.close()
-            spi2.close()
+            show(spi1, black); show(spi2, black)
+            spi1.close(); spi2.close()
             lgpio.gpiochip_close(h)
         print("EVE eyes offline.")
 

@@ -7,26 +7,14 @@ EVE servo control via PCA9685 16-channel PWM board.
 Servo layout:
     Channel 0  → Right arm up/down
     Channel 4  → Arms extend/retract from torso
-    Channel 8  → Left arm up/down (mirrored — moves opposite to right)
+    Channel 8  → Left arm up/down (mirrored)
     Channel 12 → Head left/right
-
-Positions:
-    Arms:    0 = down,   180 = up
-    Extend:  0 = in,     180 = out (full extension)
-    Head:    0 = left,   90  = center,  180 = right
-
-Note: Left arm (ch 8) is physically flipped so its angles are inverted.
-      RIGHT arm 0° = down → LEFT arm 180° = down
-      RIGHT arm 180° = up → LEFT arm 0° = up
 
 Run standalone:
     python3 servo_controller.py
 
-Run together with eyes + voice:
+Run together:
     sudo python3 main.py
-
-Dependencies:
-    pip install adafruit-circuitpython-servokit --break-system-packages
 """
 
 import time
@@ -42,7 +30,6 @@ CH_HEAD      = 12
 PULSE_MIN    = 500
 PULSE_MAX    = 2500
 
-# Named positions — right arm reference
 ARM_DOWN     = 0
 ARM_UP       = 180
 ARM_HALF     = 90
@@ -52,13 +39,11 @@ HEAD_LEFT    = 20
 HEAD_CENTER  = 90
 HEAD_RIGHT   = 160
 
-# Left arm is mirrored — invert its angles
-def mirror(angle):
-    """Invert angle for the flipped left arm servo."""
-    return 180 - angle
-
 SMOOTH_STEPS = 20
 SMOOTH_DELAY = 0.02
+
+def mirror(angle):
+    return 180 - angle
 
 
 # ── SERVO CONTROLLER ──────────────────────────────────────────────────────────
@@ -76,7 +61,6 @@ class ServoController:
         }
         self.arms_extended = False
 
-        # start in rest position
         self._set(CH_RIGHT_ARM, ARM_DOWN)
         self._set(CH_LEFT_ARM,  mirror(ARM_DOWN))
         self._set(CH_EXTEND,    EXTEND_IN)
@@ -97,54 +81,44 @@ class ServoController:
             time.sleep(delay)
 
     def smooth_move_arms(self, arm_angle, steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
-        """Move both arms simultaneously — left arm is mirrored automatically."""
         t_right = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm_angle,         steps, delay))
         t_left  = threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm_angle), steps, delay))
-        t_right.start()
-        t_left.start()
-        t_right.join()
-        t_left.join()
+        t_right.start(); t_left.start()
+        t_right.join();  t_left.join()
 
     def smooth_move_all(self, arm=None, extend=None, head=None,
                         steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
-        """Smoothly move multiple servos simultaneously."""
         threads = []
-        if arm    is not None:
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm,           steps, delay)))
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm),   steps, delay)))
+        if arm is not None:
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm,          steps, delay)))
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm),  steps, delay)))
         if extend is not None:
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_EXTEND,    extend,        steps, delay)))
-        if head   is not None:
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_HEAD,      head,          steps, delay)))
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_EXTEND, extend, steps, delay)))
+        if head is not None:
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_HEAD, head, steps, delay)))
         for t in threads: t.start()
         for t in threads: t.join()
 
-    # ── ANIMATIONS ────────────────────────────────────────────────────────────
+    # ── MAIN ANIMATIONS ───────────────────────────────────────────────────────
 
     def wake(self):
-        """Wake word detected — extend arms then head shake, raise arms."""
-        print("[Servos] wake sequence")
+        print("[Servos] wake")
         self.smooth_move(CH_EXTEND, EXTEND_OUT, steps=25, delay=0.02)
         self.arms_extended = True
-        # head wake shake
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=8, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=8, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=8, delay=0.01)
-        # raise arms to half
         self.smooth_move_arms(ARM_HALF, steps=15, delay=0.02)
 
     def listen(self):
-        """Listening — head center, arms stay where they are."""
         print("[Servos] listen")
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=10, delay=0.02)
 
     def think(self):
-        """Processing — slow head tilt."""
         print("[Servos] think")
         self.smooth_move(CH_HEAD, HEAD_LEFT, steps=30, delay=0.03)
 
     def rest(self):
-        """Rest mode — lower arms, retract, head center."""
         print("[Servos] rest")
         self.smooth_move_arms(ARM_DOWN, steps=20, delay=0.02)
         self.smooth_move(CH_EXTEND, EXTEND_IN, steps=25, delay=0.02)
@@ -152,14 +126,12 @@ class ServoController:
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=15, delay=0.02)
 
     def happy(self):
-        """Wall-E or plant — arms raise fully."""
         print("[Servos] happy")
         self.smooth_move_arms(ARM_UP, steps=15, delay=0.015)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_HALF, steps=15, delay=0.02)
 
     def suspicious(self):
-        """Unknown entity — head scan."""
         print("[Servos] suspicious")
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=12, delay=0.02)
         time.sleep(0.3)
@@ -168,19 +140,37 @@ class ServoController:
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=12, delay=0.02)
 
     def hostile(self):
-        """Threat — arms raise aggressively."""
         print("[Servos] hostile")
         self.smooth_move_arms(ARM_UP, steps=8, delay=0.01)
 
     def alarmed(self):
-        """Danger — fast head scan."""
         print("[Servos] alarmed")
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=6, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=6, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=6, delay=0.01)
 
+    # ── IDLE ANIMATIONS ───────────────────────────────────────────────────────
+
+    def idle_head_left(self):
+        print("[Servos] idle head left")
+        self.smooth_move(CH_HEAD, HEAD_LEFT, steps=35, delay=0.04)
+
+    def idle_head_right(self):
+        print("[Servos] idle head right")
+        self.smooth_move(CH_HEAD, HEAD_RIGHT, steps=35, delay=0.04)
+
+    def idle_head_center(self):
+        print("[Servos] idle head center")
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=35, delay=0.04)
+
+    def idle_arm_wave(self):
+        """Slow gentle arm raise and lower."""
+        print("[Servos] idle arm wave")
+        self.smooth_move_arms(ARM_UP,   steps=40, delay=0.04)
+        time.sleep(0.3)
+        self.smooth_move_arms(ARM_HALF, steps=40, delay=0.04)
+
     def play_emotion(self, emotion):
-        """Play animation based on emotion tag from LLM response."""
         emotion = emotion.lower().strip("[]")
         if emotion in ("happy", "excited"):
             self.happy()
@@ -196,7 +186,7 @@ class ServoController:
             self.smooth_move(CH_HEAD, HEAD_CENTER, steps=15, delay=0.02)
 
 
-# ── MAIN (queue listener) ─────────────────────────────────────────────────────
+# ── MAIN ──────────────────────────────────────────────────────────────────────
 def main(servo_queue=None):
     sc = ServoController()
 
@@ -209,9 +199,11 @@ def main(servo_queue=None):
         time.sleep(1)
         sc.suspicious()
         time.sleep(1)
-        sc.hostile()
+        sc.idle_arm_wave()
         time.sleep(1)
-        sc.alarmed()
+        sc.idle_head_left()
+        time.sleep(1)
+        sc.idle_head_right()
         time.sleep(1)
         sc.rest()
         print("Done.")
@@ -241,6 +233,14 @@ def main(servo_queue=None):
                         sc.hostile()
                     elif state == "alarmed":
                         sc.alarmed()
+                    elif state == "idle_head_left":
+                        sc.idle_head_left()
+                    elif state == "idle_head_right":
+                        sc.idle_head_right()
+                    elif state == "idle_head_center":
+                        sc.idle_head_center()
+                    elif state == "idle_arm_wave":
+                        sc.idle_arm_wave()
                     elif state.startswith("emotion:"):
                         emotion = state.split(":", 1)[1]
                         sc.play_emotion(emotion)
