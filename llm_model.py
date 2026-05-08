@@ -10,8 +10,8 @@ Pipeline:
 Run standalone:
     python3 llm_model.py
 
-Run together with eyes:
-    python3 main.py
+Run together with eyes + servos:
+    sudo python3 main.py
 
 Dependencies:
     sudo pip3 install ollama vosk sounddevice piper-tts numpy openwakeword webrtcvad pyaudio scipy --break-system-packages
@@ -20,6 +20,7 @@ Dependencies:
 
 # ── IMPORTS ───────────────────────────────────────────────────────────────────
 import os
+import re
 import warnings
 os.environ["VOSK_LOG_LEVEL"] = "-1"
 os.environ["ORT_LOGGING_LEVEL"] = "3"
@@ -44,7 +45,6 @@ SetLogLevel(-1)
 from piper import PiperVoice
 from openwakeword.model import Model as WakeModel
 
-# find USB mic by name regardless of device number
 def get_mic_device():
     devices = sd.query_devices()
     for i, d in enumerate(devices):
@@ -60,17 +60,15 @@ RECORDING_PATH     = "stt/speech_inputs/live_input.wav"
 VOSK_MODEL_PATH    = "stt/vosk-model-en-us-0.22-lgraph"
 TTS_MODEL_PATH     = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH        = "tts/speech_outputs/response.wav"
-AUDIO_DEVICE       = None    # MAX98357A via I2S — uses aplay hw:2,0
-SAMPLE_RATE        = 16000   # Hz — required by Vosk, VAD, and OpenWakeWord
-NATIVE_RATE        = 44100   # Hz — USB mic's actual hardware rate
+AUDIO_DEVICE       = None
+SAMPLE_RATE        = 16000
+NATIVE_RATE        = 44100
 
-# ── Wake word config ──────────────────────────────────────────────────────────
 WAKE_WORD          = "hey_jarvis"
-WAKE_THRESHOLD     = 0.5     # detection sensitivity
-REQUIRED_HITS      = 5       # consecutive frames above threshold to confirm
-NOISE_GATE         = 0       # minimum audio energy — 0 disables gate
+WAKE_THRESHOLD     = 0.5
+REQUIRED_HITS      = 5
+NOISE_GATE         = 0
 
-# ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3
 VAD_FRAME_MS       = 30
 VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)
@@ -78,19 +76,29 @@ VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)
 VAD_PADDING_MS     = 500
 VAD_MAX_RECORD_S   = 10
 
-# ── OpenWakeWord chunk sizes ───────────────────────────────────────────────────
 OWW_CHUNK          = 1280
 OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)
 
 
-# ── RESAMPLE HELPER ──────────────────────────────────────────────────────────
+# ── RESAMPLE HELPER ───────────────────────────────────────────────────────────
 def resample_to_16k(audio_bytes):
-    """Resample raw int16 bytes from NATIVE_RATE to SAMPLE_RATE."""
     audio     = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
     gcd       = math.gcd(SAMPLE_RATE, NATIVE_RATE)
     up, down  = SAMPLE_RATE // gcd, NATIVE_RATE // gcd
     resampled = resample_poly(audio, up, down).astype(np.int16)
     return resampled
+
+
+# ── EMOTION PARSER ────────────────────────────────────────────────────────────
+def parse_emotion(llm_response):
+    """
+    Extract emotion tag from Eve's response e.g. [suspicious], [happy].
+    Returns the emotion string or None.
+    """
+    match = re.search(r'\[(\w+)\]', llm_response)
+    if match:
+        return match.group(1).lower()
+    return None
 
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
@@ -215,13 +223,17 @@ oww_model = WakeModel()
 print("Wake word model loaded.")
 
 
-# ── 4. DEFINE ALL FUNCTIONS ───────────────────────────────────────────────────
-
+# ── 4. HELPER: SEND STATES ───────────────────────────────────────────────────
 def send_eye_state(eye_queue, state):
-    """Send eye state to eye process if queue is available."""
     if eye_queue is not None:
         eye_queue.put(state)
 
+def send_servo_state(servo_queue, state):
+    if servo_queue is not None:
+        servo_queue.put(state)
+
+
+# ── 5. PIPELINE FUNCTIONS ─────────────────────────────────────────────────────
 
 def generate_LLM_response(user_text_input):
     start_time = time.time()
@@ -242,11 +254,6 @@ def generate_LLM_response(user_text_input):
 
 
 def record_with_vad():
-    """
-    Records audio using sounddevice at NATIVE_RATE with WebRTC VAD.
-    Resamples to SAMPLE_RATE for VAD and Vosk.
-    Saves 16kHz mono wav to RECORDING_PATH.
-    """
     vad = webrtcvad.Vad(VAD_MODE)
 
     padding_frames = VAD_PADDING_MS // VAD_FRAME_MS
@@ -296,7 +303,6 @@ def record_with_vad():
 
 
 def transcribe_audio(audio_path):
-    """Transcribes a 16kHz mono wav file using Vosk."""
     wf  = wave.open(audio_path, "rb")
     rec = KaldiRecognizer(vosk_model, wf.getframerate())
 
@@ -317,7 +323,6 @@ def transcribe_audio(audio_path):
 
 
 def generate_tts_response(LLM_text_response, output_file_path):
-    """Converts Eve's text response to a wav file using Piper TTS."""
     voice = PiperVoice.load(TTS_MODEL_PATH)
 
     with wave.open(output_file_path, "wb") as wav_file:
@@ -340,8 +345,8 @@ def play_audio(file_path):
             subprocess.run(["aplay", "-D", "plughw:2,0", file_path])
 
 
-# ── MAIN FUNCTION (called by main.py or standalone) ───────────────────────────
-def main(eye_queue=None):
+# ── MAIN ──────────────────────────────────────────────────────────────────────
+def main(eye_queue=None, servo_queue=None):
     print("EVE voice pipeline online.")
     print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
     print("Press Ctrl+C to shut down.")
@@ -360,7 +365,6 @@ def main(eye_queue=None):
 
     try:
         while True:
-            # ── Wake word detection loop ──────────────────────────────────────
             raw   = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
             audio = resample_to_16k(raw)
 
@@ -382,22 +386,23 @@ def main(eye_queue=None):
                 trigger_count = 0
                 print(f"\nEve: Wake word detected!")
 
-                # ── Signal eyes to open wide ──────────────────────────────────
+                # ── Signal eyes and servos to wake ────────────────────────────
                 send_eye_state(eye_queue, "wake")
+                send_servo_state(servo_queue, "wake")
 
-                # ── Close PyAudio, record with sounddevice ────────────────────
                 stream.stop_stream()
                 stream.close()
 
-                # ── Signal eyes to listen state ───────────────────────────────
+                # ── Signal listen state ───────────────────────────────────────
                 send_eye_state(eye_queue, "listen")
+                send_servo_state(servo_queue, "listen")
 
                 audio_path = record_with_vad()
 
-                # ── Pipeline BEFORE reopening OWW stream ──────────────────────
                 if not audio_path:
                     print("Eve: ...")
                     send_eye_state(eye_queue, "idle")
+                    send_servo_state(servo_queue, "idle")
                 else:
                     user_text_input = transcribe_audio(audio_path)
                     print(f"You said: {user_text_input}")
@@ -405,19 +410,32 @@ def main(eye_queue=None):
                     if not user_text_input:
                         print("Eve: ...")
                         send_eye_state(eye_queue, "idle")
+                        send_servo_state(servo_queue, "idle")
                     else:
-                        # ── Signal eyes to think state ────────────────────────
+                        # ── Signal think state ────────────────────────────────
                         send_eye_state(eye_queue, "think")
+                        send_servo_state(servo_queue, "think")
 
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
+
+                        # ── Parse emotion and trigger servo animation ─────────
+                        emotion = parse_emotion(llm_response)
+                        if emotion:
+                            send_servo_state(servo_queue, f"emotion:{emotion}")
+                            send_eye_state(eye_queue, "idle")
+                        else:
+                            send_eye_state(eye_queue, "idle")
+                            send_servo_state(servo_queue, "listen")
+
                         generate_tts_response(llm_response, OUTPUT_PATH)
                         # play_audio(OUTPUT_PATH)  # uncomment when speaker is wired
 
-                        # ── Back to idle after responding ─────────────────────
+                        # back to idle after response
                         send_eye_state(eye_queue, "idle")
+                        send_servo_state(servo_queue, "idle")
 
-                # ── Reopen OWW stream AFTER pipeline completes ────────────────
+                # ── Reopen OWW stream ─────────────────────────────────────────
                 stream = pa.open(
                     rate=NATIVE_RATE,
                     channels=1,
@@ -439,6 +457,5 @@ def main(eye_queue=None):
         pa.terminate()
 
 
-# ── RUN STANDALONE ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     main()

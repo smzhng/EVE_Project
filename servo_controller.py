@@ -15,6 +15,16 @@ Positions:
     Extend:  0 = in,     90  = out
     Head:    0 = left,   90  = center,  180 = right
 
+Servo states (sent via queue from llm_model.py):
+    wake        → extend arms, head shake, then idle
+    listen      → arms extended, head center
+    think       → slow head tilt while processing
+    idle        → arms down, retract, head center (rest mode)
+    happy       → arms raise and extend
+    suspicious  → head scan left/right
+    hostile     → arms extend aggressively
+    alarmed     → fast head scan
+
 Run standalone:
     python3 servo_controller.py
 
@@ -50,7 +60,7 @@ HEAD_RIGHT   = 160
 
 # Smooth movement
 SMOOTH_STEPS = 20
-SMOOTH_DELAY = 0.02   # seconds between steps
+SMOOTH_DELAY = 0.02
 
 
 # ── SERVO CONTROLLER ──────────────────────────────────────────────────────────
@@ -60,39 +70,31 @@ class ServoController:
         for ch in [CH_LEFT_ARM, CH_EXTEND, CH_RIGHT_ARM, CH_HEAD]:
             self.kit.servo[ch].set_pulse_width_range(PULSE_MIN, PULSE_MAX)
 
-        # track current angles
         self.angles = {
             CH_LEFT_ARM:  ARM_DOWN,
             CH_EXTEND:    EXTEND_IN,
             CH_RIGHT_ARM: ARM_DOWN,
             CH_HEAD:      HEAD_CENTER,
         }
+        self.arms_extended = False
 
-        # move to default positions on startup
-        self._set_all(
-            left=ARM_DOWN,
-            right=ARM_DOWN,
-            extend=EXTEND_IN,
-            head=HEAD_CENTER
-        )
-        print("Servos initialized.")
+        # start in rest position
+        self._set_all(left=ARM_DOWN, right=ARM_DOWN, extend=EXTEND_IN, head=HEAD_CENTER)
+        print("Servos initialized — arms retracted, head center.")
 
     def _set(self, channel, angle):
-        """Instantly set a servo to an angle."""
         angle = max(0, min(180, angle))
         self.kit.servo[channel].angle = angle
         self.angles[channel] = angle
 
     def _set_all(self, left, right, extend, head):
-        """Instantly set all servos."""
         self._set(CH_LEFT_ARM,  left)
         self._set(CH_RIGHT_ARM, right)
         self._set(CH_EXTEND,    extend)
         self._set(CH_HEAD,      head)
 
     def smooth_move(self, channel, target, steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
-        """Smoothly move a servo from current position to target angle."""
-        start = self.angles[channel]
+        start  = self.angles[channel]
         target = max(0, min(180, target))
         for i in range(1, steps + 1):
             angle = int(start + (target - start) * i / steps)
@@ -101,7 +103,6 @@ class ServoController:
 
     def smooth_move_all(self, left=None, right=None, extend=None, head=None,
                         steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
-        """Smoothly move multiple servos simultaneously using threads."""
         threads = []
         if left   is not None: threads.append(threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  left,   steps, delay)))
         if right  is not None: threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, right,  steps, delay)))
@@ -110,59 +111,78 @@ class ServoController:
         for t in threads: t.start()
         for t in threads: t.join()
 
-    # ── PRESET ANIMATIONS ─────────────────────────────────────────────────────
+    # ── ANIMATIONS ────────────────────────────────────────────────────────────
 
-    def idle(self):
-        """Default resting position."""
-        self.smooth_move_all(left=ARM_DOWN, right=ARM_DOWN, extend=EXTEND_IN, head=HEAD_CENTER)
+    def wake(self):
+        """Wake word detected — extend arms then head shake."""
+        print("[Servos] wake sequence")
+        # extend arms out first
+        self.smooth_move(CH_EXTEND, EXTEND_OUT, steps=25, delay=0.02)
+        self.arms_extended = True
+        # head wake shake
+        self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=8, delay=0.01)
+        self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=8, delay=0.01)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=8, delay=0.01)
+        # raise arms slightly to alert position
+        self.smooth_move_all(left=ARM_HALF, right=ARM_HALF, steps=15, delay=0.02)
 
-    def alert(self):
-        """Wake word detected — head snaps to center, arms slightly raised."""
-        self.smooth_move_all(left=ARM_HALF, right=ARM_HALF, extend=EXTEND_IN, head=HEAD_CENTER, steps=10, delay=0.01)
+    def listen(self):
+        """Listening — arms extended, head center, attentive."""
+        print("[Servos] listen")
+        self.smooth_move_all(head=HEAD_CENTER, steps=10, delay=0.02)
+
+    def think(self):
+        """Processing — slow head tilt."""
+        print("[Servos] think")
+        self.smooth_move(CH_HEAD, HEAD_LEFT, steps=30, delay=0.03)
+
+    def rest(self):
+        """Rest mode — arms down, retract, head center."""
+        print("[Servos] rest")
+        # lower arms first before retracting
+        self.smooth_move_all(left=ARM_DOWN, right=ARM_DOWN, steps=20, delay=0.02)
+        # retract arms into torso
+        self.smooth_move(CH_EXTEND, EXTEND_IN, steps=25, delay=0.02)
+        self.arms_extended = False
+        # head back to center
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=15, delay=0.02)
 
     def happy(self):
-        """Wall-E mentioned or plant found — arms raise and extend."""
-        self.smooth_move_all(left=ARM_UP, right=ARM_UP, extend=EXTEND_OUT, head=HEAD_CENTER)
-        time.sleep(0.5)
-        self.smooth_move_all(left=ARM_DOWN, right=ARM_DOWN, extend=EXTEND_IN, head=HEAD_CENTER)
+        """Wall-E or plant — arms raise fully and extend."""
+        print("[Servos] happy")
+        self.smooth_move_all(left=ARM_UP, right=ARM_UP, steps=15, delay=0.015)
+        time.sleep(0.3)
+        self.smooth_move_all(left=ARM_HALF, right=ARM_HALF, steps=15, delay=0.02)
 
     def suspicious(self):
-        """Scanning unknown entity — head tilts left, arms stay down."""
-        self.smooth_move_all(head=HEAD_LEFT)
-        time.sleep(0.5)
-        self.smooth_move_all(head=HEAD_RIGHT)
-        time.sleep(0.5)
-        self.smooth_move_all(head=HEAD_CENTER)
+        """Unknown entity — head scan."""
+        print("[Servos] suspicious")
+        self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=12, delay=0.02)
+        time.sleep(0.3)
+        self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=12, delay=0.02)
+        time.sleep(0.3)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=12, delay=0.02)
 
     def hostile(self):
-        """Threat detected — arms extend out aggressively."""
-        self.smooth_move_all(left=ARM_HALF, right=ARM_HALF, extend=EXTEND_OUT, head=HEAD_CENTER, steps=8, delay=0.01)
-        time.sleep(0.3)
+        """Threat — arms raise aggressively."""
+        print("[Servos] hostile")
         self.smooth_move_all(left=ARM_UP, right=ARM_UP, steps=8, delay=0.01)
 
     def alarmed(self):
-        """Danger detected — quick head scan."""
-        self.smooth_move_all(head=HEAD_LEFT, steps=8, delay=0.01)
-        time.sleep(0.2)
-        self.smooth_move_all(head=HEAD_RIGHT, steps=8, delay=0.01)
-        time.sleep(0.2)
-        self.smooth_move_all(head=HEAD_CENTER, steps=8, delay=0.01)
-
-    def thinking(self):
-        """LLM processing — slow head tilt."""
-        self.smooth_move_all(head=HEAD_LEFT, steps=30, delay=0.03)
+        """Danger — fast head scan."""
+        print("[Servos] alarmed")
+        self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=6, delay=0.01)
+        self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=6, delay=0.01)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=6, delay=0.01)
 
     def idle_wander(self):
-        """Idle animation — slow random head movement."""
+        """Idle animation — slow random head drift."""
         import random
         target = random.choice([HEAD_LEFT, HEAD_CENTER, HEAD_RIGHT])
-        self.smooth_move_all(head=target, steps=40, delay=0.04)
+        self.smooth_move(CH_HEAD, target, steps=40, delay=0.04)
 
-    def play_animation(self, emotion):
-        """
-        Play animation based on emotion tag from LLM response.
-        Called from llm_model.py after parsing Eve's response.
-        """
+    def play_emotion(self, emotion):
+        """Play animation based on emotion tag parsed from LLM response."""
         emotion = emotion.lower().strip("[]")
         if emotion in ("happy", "excited"):
             self.happy()
@@ -172,39 +192,70 @@ class ServoController:
             self.hostile()
         elif emotion in ("alarmed",):
             self.alarmed()
+        elif emotion in ("confused", "curious"):
+            self.suspicious()
         else:
-            self.idle()
+            self.smooth_move(CH_HEAD, HEAD_CENTER, steps=15, delay=0.02)
 
 
-# ── STANDALONE TEST ───────────────────────────────────────────────────────────
-def main():
-    print("EVE servo test — running all animations...")
+# ── MAIN (queue listener) ────────────────────────────────────────────────────
+def main(servo_queue=None):
     sc = ServoController()
-    time.sleep(1)
 
-    print("Alert...")
-    sc.alert()
-    time.sleep(1)
+    if servo_queue is None:
+        # standalone test
+        print("Running standalone animation test...")
+        time.sleep(1)
+        sc.wake()
+        time.sleep(1)
+        sc.happy()
+        time.sleep(1)
+        sc.suspicious()
+        time.sleep(1)
+        sc.hostile()
+        time.sleep(1)
+        sc.alarmed()
+        time.sleep(1)
+        sc.rest()
+        print("Done.")
+        return
 
-    print("Happy...")
-    sc.happy()
-    time.sleep(1)
+    print("Servo controller ready, listening for states...")
 
-    print("Suspicious...")
-    sc.suspicious()
-    time.sleep(1)
+    try:
+        while True:
+            if not servo_queue.empty():
+                try:
+                    state = servo_queue.get_nowait()
+                    print(f"[Servos] received: {state}")
 
-    print("Hostile...")
-    sc.hostile()
-    time.sleep(1)
+                    if state == "wake":
+                        sc.wake()
+                    elif state == "listen":
+                        sc.listen()
+                    elif state == "think":
+                        sc.think()
+                    elif state == "idle":
+                        sc.rest()
+                    elif state == "happy":
+                        sc.happy()
+                    elif state == "suspicious":
+                        sc.suspicious()
+                    elif state == "hostile":
+                        sc.hostile()
+                    elif state == "alarmed":
+                        sc.alarmed()
+                    elif state.startswith("emotion:"):
+                        emotion = state.split(":", 1)[1]
+                        sc.play_emotion(emotion)
+                except:
+                    pass
+            else:
+                time.sleep(0.05)
 
-    print("Alarmed...")
-    sc.alarmed()
-    time.sleep(1)
-
-    print("Idle...")
-    sc.idle()
-    print("Done.")
+    except KeyboardInterrupt:
+        print("\nServos offline.")
+        sc.rest()
 
 
 if __name__ == "__main__":
