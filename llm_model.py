@@ -65,18 +65,18 @@ SAMPLE_RATE        = 16000
 NATIVE_RATE        = 44100
 
 # ── Wake word config ──────────────────────────────────────────────────────────
-# WAKE_WORD          = "okay_eve"  # little buggy right now so gonna just use "hey_jarvis" as the wake word for now
-WAKE_WORD          = "hey_jarvis"
+WAKE_WORD          = "hey_jarvis"   # switch to "okay_eve" when model is reliable
 WAKE_THRESHOLD     = 0.5
 REQUIRED_HITS      = 5
 NOISE_GATE         = 0
 
+# ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3
 VAD_FRAME_MS       = 30
 VAD_FRAME_SAMPLES  = int(SAMPLE_RATE * VAD_FRAME_MS / 1000)
 VAD_NATIVE_SAMPLES = int(NATIVE_RATE * VAD_FRAME_MS / 1000)
-VAD_PADDING_MS     = 500
-VAD_MAX_RECORD_S   = 10
+VAD_PADDING_MS     = 1000   # ms of silence before cutting off — increased for more time
+VAD_MAX_RECORD_S   = 15     # max recording seconds
 
 OWW_CHUNK          = 1280
 OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)
@@ -232,8 +232,10 @@ print("Vosk model loaded.")
 
 # ── 3. LOAD WAKE WORD MODEL ───────────────────────────────────────────────────
 print(f"Loading wake word model: {WAKE_WORD}...")
-oww_model = WakeModel()
-# oww_model = WakeModel(wakeword_model_paths=["models/okay_eve.onnx"])
+if WAKE_WORD == "okay_eve":
+    oww_model = WakeModel(wakeword_model_paths=["models/okay_eve.onnx"])
+else:
+    oww_model = WakeModel()
 print("Wake word model loaded.")
 
 
@@ -241,7 +243,7 @@ print("Wake word model loaded.")
 
 def generate_LLM_response(user_text_input):
     start_time = time.time()
-    client = ollama.Client(host='http://172.20.10.4:11434')
+    client = ollama.Client(host='http://10.0.0.100:11434')
     response = client.chat(
         model='eve',
         messages=[{'role': 'user', 'content': user_text_input}],
@@ -349,9 +351,6 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
     print("Press Ctrl+C to shut down.")
     print("-" * 50)
 
-    # play boot sounds on startup
-    send_idle_state(idle_queue, "boot")
-
     pa            = pyaudio.PyAudio()
     stream        = pa.open(
         rate=NATIVE_RATE,
@@ -385,7 +384,10 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
                 trigger_count = 0
                 print(f"\nEve: Wake word detected!")
 
-                # ── Wake ──────────────────────────────────────────────────────
+                # ── Boot sound plays on first wake ────────────────────────────
+                send_idle_state(idle_queue, "boot")
+
+                # ── Wake — eyes open, arms extend ─────────────────────────────
                 send_eye_state(eye_queue, "wake")
                 send_servo_state(servo_queue, "wake")
                 send_idle_state(idle_queue, "awake")
@@ -432,7 +434,7 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
                             send_idle_state(idle_queue, f"emotion:{emotion}")
 
                         generate_tts_response(llm_response, OUTPUT_PATH)
-                        play_audio(OUTPUT_PATH) # temporarily use onn speaker
+                        play_audio(OUTPUT_PATH)
 
                         # back to idle — arms stay extended, idle anims resume
                         send_eye_state(eye_queue, "idle")
