@@ -80,7 +80,7 @@ OWW_CHUNK          = 1280
 OWW_NATIVE_CHUNK   = int(NATIVE_RATE * OWW_CHUNK / SAMPLE_RATE)
 
 
-# ── RESAMPLE HELPER ───────────────────────────────────────────────────────────
+# ── HELPERS ───────────────────────────────────────────────────────────────────
 def resample_to_16k(audio_bytes):
     audio     = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
     gcd       = math.gcd(SAMPLE_RATE, NATIVE_RATE)
@@ -88,17 +88,20 @@ def resample_to_16k(audio_bytes):
     resampled = resample_poly(audio, up, down).astype(np.int16)
     return resampled
 
-
-# ── EMOTION PARSER ────────────────────────────────────────────────────────────
 def parse_emotion(llm_response):
-    """
-    Extract emotion tag from Eve's response e.g. [suspicious], [happy].
-    Returns the emotion string or None.
-    """
+    """Extract emotion tag from Eve's response e.g. [suspicious]."""
     match = re.search(r'\[(\w+)\]', llm_response)
     if match:
         return match.group(1).lower()
     return None
+
+def send_eye_state(eye_queue, state):
+    if eye_queue is not None:
+        eye_queue.put(state)
+
+def send_servo_state(servo_queue, state):
+    if servo_queue is not None:
+        servo_queue.put(state)
 
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
@@ -223,17 +226,7 @@ oww_model = WakeModel()
 print("Wake word model loaded.")
 
 
-# ── 4. HELPER: SEND STATES ───────────────────────────────────────────────────
-def send_eye_state(eye_queue, state):
-    if eye_queue is not None:
-        eye_queue.put(state)
-
-def send_servo_state(servo_queue, state):
-    if servo_queue is not None:
-        servo_queue.put(state)
-
-
-# ── 5. PIPELINE FUNCTIONS ─────────────────────────────────────────────────────
+# ── 4. PIPELINE FUNCTIONS ─────────────────────────────────────────────────────
 
 def generate_LLM_response(user_text_input):
     start_time = time.time()
@@ -245,7 +238,6 @@ def generate_LLM_response(user_text_input):
     )
     elapsed = time.time() - start_time
     llm_response = response['message']['content']
-
     sentences = llm_response.split('.')
     if len(sentences) > 3:
         llm_response = '. '.join(sentences[:3]) + '.'
@@ -255,7 +247,6 @@ def generate_LLM_response(user_text_input):
 
 def record_with_vad():
     vad = webrtcvad.Vad(VAD_MODE)
-
     padding_frames = VAD_PADDING_MS // VAD_FRAME_MS
     ring_buffer    = collections.deque(maxlen=padding_frames)
     triggered      = False
@@ -305,7 +296,6 @@ def record_with_vad():
 def transcribe_audio(audio_path):
     wf  = wave.open(audio_path, "rb")
     rec = KaldiRecognizer(vosk_model, wf.getframerate())
-
     transcription_parts = []
     while True:
         data = wf.readframes(4000)
@@ -314,24 +304,20 @@ def transcribe_audio(audio_path):
         if rec.AcceptWaveform(data):
             text = json.loads(rec.Result())['text']
             transcription_parts.append(text)
-
     final_text = json.loads(rec.FinalResult())['text']
     transcription_parts.append(final_text)
     wf.close()
-
     return " ".join(transcription_parts).strip()
 
 
 def generate_tts_response(LLM_text_response, output_file_path):
     voice = PiperVoice.load(TTS_MODEL_PATH)
-
     with wave.open(output_file_path, "wb") as wav_file:
         voice.synthesize_wav(LLM_text_response, wav_file)
         sample_rate    = 22050
         silence_frames = int(sample_rate * 0.5)
         silence        = struct.pack('<' + 'h' * silence_frames, *([0] * silence_frames))
         wav_file.writeframes(silence)
-
     return output_file_path
 
 
@@ -373,7 +359,6 @@ def main(eye_queue=None, servo_queue=None):
             else:
                 prediction = oww_model.predict(audio)
                 score      = prediction.get(WAKE_WORD, 0)
-
                 if score >= WAKE_THRESHOLD:
                     trigger_count += 1
                     print(f"[OWW] score={score:.3f} hit={trigger_count}/{REQUIRED_HITS}")
@@ -386,14 +371,14 @@ def main(eye_queue=None, servo_queue=None):
                 trigger_count = 0
                 print(f"\nEve: Wake word detected!")
 
-                # ── Signal eyes and servos to wake ────────────────────────────
+                # ── Wake — eyes open, arms extend ────────────────────────────
                 send_eye_state(eye_queue, "wake")
                 send_servo_state(servo_queue, "wake")
 
                 stream.stop_stream()
                 stream.close()
 
-                # ── Signal listen state ───────────────────────────────────────
+                # ── Listen state ──────────────────────────────────────────────
                 send_eye_state(eye_queue, "listen")
                 send_servo_state(servo_queue, "listen")
 
@@ -401,8 +386,9 @@ def main(eye_queue=None, servo_queue=None):
 
                 if not audio_path:
                     print("Eve: ...")
+                    # nothing heard — eyes go idle, arms stay extended
                     send_eye_state(eye_queue, "idle")
-                    send_servo_state(servo_queue, "idle")
+                    # NOTE: no servo idle here — arms stay out waiting for next input
                 else:
                     user_text_input = transcribe_audio(audio_path)
                     print(f"You said: {user_text_input}")
@@ -410,30 +396,27 @@ def main(eye_queue=None, servo_queue=None):
                     if not user_text_input:
                         print("Eve: ...")
                         send_eye_state(eye_queue, "idle")
-                        send_servo_state(servo_queue, "idle")
+                        # arms stay extended
                     else:
-                        # ── Signal think state ────────────────────────────────
+                        # ── Think ─────────────────────────────────────────────
                         send_eye_state(eye_queue, "think")
                         send_servo_state(servo_queue, "think")
 
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
 
-                        # ── Parse emotion and trigger servo animation ─────────
+                        # ── Emotion animation ─────────────────────────────────
                         emotion = parse_emotion(llm_response)
                         if emotion:
                             send_servo_state(servo_queue, f"emotion:{emotion}")
-                            send_eye_state(eye_queue, "idle")
-                        else:
-                            send_eye_state(eye_queue, "idle")
-                            send_servo_state(servo_queue, "listen")
 
                         generate_tts_response(llm_response, OUTPUT_PATH)
-                        # play_audio(OUTPUT_PATH)  # uncomment when speaker is wired
+                        # play_audio(OUTPUT_PATH)  # uncomment when speaker wired
 
-                        # back to idle after response
+                        # eyes go idle, arms STAY EXTENDED waiting for next input
                         send_eye_state(eye_queue, "idle")
-                        send_servo_state(servo_queue, "idle")
+                        # servo stays in last emotion pose — no idle sent here
+                        # arms only retract when eye inactivity timeout fires (eve_eyes.py)
 
                 # ── Reopen OWW stream ─────────────────────────────────────────
                 stream = pa.open(

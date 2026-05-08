@@ -3,24 +3,6 @@
 eve_eyes.py
 -----------
 Animated eye display for EVE (Wall-E) using two Waveshare 1.5inch RGB OLED modules.
-Eye graphics extracted directly from the original ShimmerNZ/EVE-2.0 project
-(EveEye.h) — sclera texture + eyelid masks rendered faithfully.
-
-Runs on Raspberry Pi 5 using SPI interface.
-
-Wiring:
-    Both displays share: VCC, GND, DIN (MOSI), CLK, DC, RST
-    Display 1 CS  →  GPIO 8  (CE0, Pin 24)
-    Display 2 CS  →  GPIO 7  (CE1, Pin 26)
-
-Run standalone:
-    sudo python3 eve_eyes.py
-
-Run together with voice:
-    sudo python3 main.py
-
-Dependencies:
-    sudo pip3 install pillow spidev lgpio --break-system-packages
 
 Eye states (sent via queue from llm_model.py):
     closed  → eyes fully shut (startup + inactivity)
@@ -28,6 +10,9 @@ Eye states (sent via queue from llm_model.py):
     listen  → eyes open, no blinking (recording speech)
     think   → eyes slightly squinted (LLM processing)
     idle    → eyes open with normal blinking, 30s inactivity timer
+
+When inactivity timeout fires, also sends "idle" to servo_queue
+so arms retract at the same time eyes close.
 """
 
 import time
@@ -54,7 +39,7 @@ PIN_RST = 27
 BLINK_INTERVAL_MIN  = 3.0
 BLINK_INTERVAL_MAX  = 7.0
 FRAME_DELAY         = 0.04
-INACTIVITY_TIMEOUT  = 30.0   # seconds before eyes close after last interaction
+INACTIVITY_TIMEOUT  = 30.0
 
 LAPTOP_MODE = os.environ.get('EVE_LAPTOP_MODE') == '1'
 if not LAPTOP_MODE:
@@ -73,16 +58,13 @@ if not LAPTOP_MODE:
     spi2.mode = 0
 
 
-# ── LOAD EYE DATA FROM EveEye.h ───────────────────────────────────────────────
+# ── LOAD EYE DATA ─────────────────────────────────────────────────────────────
 def load_eye_data():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     h_file = os.path.join(script_dir, 'EveEye.h')
 
     if not os.path.exists(h_file):
-        raise FileNotFoundError(
-            f"EveEye.h not found at {h_file}\n"
-            "Please place EveEye.h in the same folder as eve_eyes.py"
-        )
+        raise FileNotFoundError(f"EveEye.h not found at {h_file}")
 
     with open(h_file, 'r') as f:
         content = f.read()
@@ -107,7 +89,6 @@ def load_eye_data():
 
     upper = extract_uint8_array(content, 'upper')
     lower = extract_uint8_array(content, 'lower')
-
     print(f"Eye data loaded: sclera {sclera.shape}, upper {upper.shape}, lower {lower.shape}")
     return sclera, upper, lower
 
@@ -169,25 +150,20 @@ def show(spi, img):
 # ── EYE RENDERER ──────────────────────────────────────────────────────────────
 def render_eye(sclera, upper, lower, uT, lT, combat_mode=False, y_offset=0, flip_v=False):
     sclera_crop = sclera[SCLERA_Y:SCLERA_Y+SCREEN_H, SCLERA_X:SCLERA_X+SCREEN_W].copy()
-
     if flip_v:
         sclera_crop = sclera_crop[::-1, :, :]
-
     if y_offset != 0:
         upper = np.roll(upper, y_offset, axis=0)
         lower = np.roll(lower, y_offset, axis=0)
-
     eyelid_mask = (upper <= uT) | (lower <= lT)
     result = sclera_crop.copy()
     result[eyelid_mask] = [0, 0, 0]
-
     if combat_mode:
         b_dominant = (result[:,:,2] > result[:,:,0]) & (result[:,:,2] > 50)
         r_ch = result[:,:,2].copy()
         result[b_dominant, 0] = r_ch[b_dominant]
         result[b_dominant, 2] = 0
         result[b_dominant, 1] = (result[b_dominant,1] * 0.3).astype(np.uint8)
-
     return result
 
 
@@ -202,11 +178,10 @@ class EveEyes:
         self.blink_start = 0
         self.blink_dur   = 0
         self.next_blink  = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
-        self.state       = "closed"   # start closed, open on first wake word
-        self.last_active = None       # timestamp of last interaction
+        self.state       = "closed"
+        self.last_active = None
 
     def set_state(self, state):
-        """Called when voice pipeline sends a new eye state."""
         self.state = state
         if state in ("wake", "listen", "think", "idle"):
             self.last_active = time.time()
@@ -227,32 +202,25 @@ class EveEyes:
             print("[Eyes] state → closed")
 
     def _show_frame(self, uT, lT):
-        """Render and display one frame."""
-        # left display is flipped — swap upper/lower so animation appears symmetric
         frame_left  = render_eye(self.sclera, self.upper, self.lower, lT, uT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=True)
         frame_right = render_eye(self.sclera, self.upper, self.lower, uT, lT, self.combat_mode, y_offset=-EYE_Y_OFFSET, flip_v=False)
         show(spi1, frame_left)
         show(spi2, frame_right[:, ::-1, :])
 
     def _play_open_animation(self):
-        """Eyes open from closed — fade in then double blink."""
-        # fade open — both lids open together
         for i in range(11):
             uT = int((1.0 - i / 10.0) * 254)
-            lT = uT  # both lids animate together
-            self._show_frame(uT, lT)
+            self._show_frame(uT, uT)
             time.sleep(0.06)
-
-        # double blink
         for _ in range(2):
             for uT in [0, 254, 0]:
                 self._show_frame(uT, uT)
                 time.sleep(0.08)
 
-    def update(self, eye_queue=None):
+    def update(self, eye_queue=None, servo_queue=None):
         now = time.time()
 
-        # check for new state — only read one per frame
+        # check for new state
         if eye_queue is not None and not eye_queue.empty():
             try:
                 new_state = eye_queue.get_nowait()
@@ -260,33 +228,32 @@ class EveEyes:
             except:
                 pass
 
-        # inactivity timeout — close eyes after 30s of idle
+        # inactivity timeout — close eyes AND retract arms
         if self.state == "idle" and self.last_active is not None:
             if now - self.last_active > INACTIVITY_TIMEOUT:
                 print("[Eyes] inactivity timeout → closed")
                 self.state = "closed"
                 self.blink_state = 0
+                # signal servos to retract
+                if servo_queue is not None:
+                    servo_queue.put("idle")
 
         # ── State rendering ───────────────────────────────────────────────────
         if self.state == "closed":
-            # eyes fully shut
             self._show_frame(254, 254)
             time.sleep(FRAME_DELAY)
 
         elif self.state == "wake":
-            # play opening animation then go to idle
             self._play_open_animation()
             self.state = "idle"
             self.last_active = time.time()
             self.next_blink  = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
 
         elif self.state == "listen":
-            # eyes open, attentive
             self._show_frame(0, 0)
             time.sleep(FRAME_DELAY)
 
         elif self.state == "think":
-            # eyes slightly squinted
             self._show_frame(40, 40)
             time.sleep(FRAME_DELAY)
 
@@ -305,15 +272,12 @@ class EveEyes:
                 elapsed = now - self.blink_start
                 s       = min(1.0, elapsed / self.blink_dur)
                 s_int   = int(s * 255)
-
                 if self.blink_state == 2:
                     s_int = 1 + s_int
                 else:
                     s_int = 256 - s_int
-
                 uT = (0 * s_int + 254 * (257 - s_int)) // 256
                 lT = uT
-
                 if elapsed >= self.blink_dur:
                     if self.blink_state == 1:
                         self.blink_state = 2
@@ -328,7 +292,7 @@ class EveEyes:
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def main(eye_queue=None):
+def main(eye_queue=None, servo_queue=None):
     print("Loading eye data from EveEye.h...")
     sclera, upper, lower = load_eye_data()
 
@@ -344,7 +308,7 @@ def main(eye_queue=None):
 
     try:
         while True:
-            eyes.update(eye_queue)
+            eyes.update(eye_queue, servo_queue)
 
     except KeyboardInterrupt:
         print("\nShutting down eyes...")
@@ -358,6 +322,5 @@ def main(eye_queue=None):
         print("EVE eyes offline.")
 
 
-# ── RUN STANDALONE ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     main()

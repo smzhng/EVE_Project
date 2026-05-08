@@ -4,6 +4,8 @@ main.py
 -------
 Runs EVE's eye animations, voice pipeline, and servo controller simultaneously.
 Two shared queues let the voice pipeline signal eye and servo state changes.
+The eye process also has access to the servo queue so it can retract arms
+when the 30s inactivity timeout fires.
 
 Run:
     sudo python3 main.py
@@ -16,9 +18,9 @@ import signal
 import sys
 
 
-def run_eyes(eye_queue):
+def run_eyes(eye_queue, servo_queue):
     import eve_eyes
-    eve_eyes.main(eye_queue)
+    eve_eyes.main(eye_queue, servo_queue)
 
 
 def run_voice(eye_queue, servo_queue):
@@ -41,9 +43,9 @@ if __name__ == "__main__":
     eye_queue   = Queue()
     servo_queue = Queue()
 
-    eye_process   = Process(target=run_eyes,   args=(eye_queue,),          name="EVE-Eyes")
-    voice_process = Process(target=run_voice,  args=(eye_queue, servo_queue), name="EVE-Voice")
-    servo_process = Process(target=run_servos, args=(servo_queue,),         name="EVE-Servos")
+    eye_process   = Process(target=run_eyes,   args=(eye_queue, servo_queue),    name="EVE-Eyes")
+    voice_process = Process(target=run_voice,  args=(eye_queue, servo_queue),    name="EVE-Voice")
+    servo_process = Process(target=run_servos, args=(servo_queue,),              name="EVE-Servos")
 
     eye_process.start()
     voice_process.start()
