@@ -65,7 +65,8 @@ SAMPLE_RATE        = 16000
 NATIVE_RATE        = 44100
 
 # ── Wake word config ──────────────────────────────────────────────────────────
-WAKE_WORD          = "okay_eve"
+# WAKE_WORD          = "okay_eve"  # little buggy right now so gonna just use "hey_jarvis" as the wake word for now
+WAKE_WORD          = "hey_jarvis"
 WAKE_THRESHOLD     = 0.5
 REQUIRED_HITS      = 5
 NOISE_GATE         = 0
@@ -231,7 +232,8 @@ print("Vosk model loaded.")
 
 # ── 3. LOAD WAKE WORD MODEL ───────────────────────────────────────────────────
 print(f"Loading wake word model: {WAKE_WORD}...")
-oww_model = WakeModel(wakeword_model_paths=["models/okay_eve.onnx"])
+oww_model = WakeModel()
+# oww_model = WakeModel(wakeword_model_paths=["models/okay_eve.onnx"])
 print("Wake word model loaded.")
 
 
