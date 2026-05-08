@@ -60,14 +60,12 @@ RECORDING_PATH     = "stt/speech_inputs/live_input.wav"
 VOSK_MODEL_PATH    = "stt/vosk-model-en-us-0.22-lgraph"
 TTS_MODEL_PATH     = "tts/en_US-libritts_r-medium.onnx"
 OUTPUT_PATH        = "tts/speech_outputs/response.wav"
-AUDIO_DEVICE       = None
+AUDIO_DEVICE       = "bluez_output.F4_4E_FD_2B_B4_43.1"  # onn bluetooth speaker
 SAMPLE_RATE        = 16000
 NATIVE_RATE        = 44100
 
 # ── Wake word config ──────────────────────────────────────────────────────────
-# Switch to "okay_eve" once model is downloaded and placed in models/ folder
-# WAKE_WORD          = "hey_jarvis"   # old model trained on "hey jarvis" wake word (for testing)
-WAKE_WORD = "okay_eve"
+WAKE_WORD          = "okay_eve"
 WAKE_THRESHOLD     = 0.5
 REQUIRED_HITS      = 5
 NOISE_GATE         = 0
@@ -92,10 +90,15 @@ def resample_to_16k(audio_bytes):
     return resampled
 
 def parse_emotion(llm_response):
+    """Extract emotion tag from Eve's response e.g. [suspicious]."""
     match = re.search(r'\[(\w+)\]', llm_response)
     if match:
         return match.group(1).lower()
     return None
+
+def contains_walle(text):
+    """Check if Wall-E is mentioned in text."""
+    return "wall-e" in text.lower() or "walle" in text.lower()
 
 def send_eye_state(eye_queue, state):
     if eye_queue is not None:
@@ -236,7 +239,7 @@ print("Wake word model loaded.")
 
 def generate_LLM_response(user_text_input):
     start_time = time.time()
-    client = ollama.Client(host='http://10.0.0.100:11434')
+    client = ollama.Client(host='http://172.20.10.4:11434')
     response = client.chat(
         model='eve',
         messages=[{'role': 'user', 'content': user_text_input}],
@@ -344,6 +347,9 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
     print("Press Ctrl+C to shut down.")
     print("-" * 50)
 
+    # play boot sounds on startup
+    send_idle_state(idle_queue, "boot")
+
     pa            = pyaudio.PyAudio()
     stream        = pa.open(
         rate=NATIVE_RATE,
@@ -380,7 +386,7 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
                 # ── Wake ──────────────────────────────────────────────────────
                 send_eye_state(eye_queue, "wake")
                 send_servo_state(servo_queue, "wake")
-                send_idle_state(idle_queue, "awake")   # start idle animations
+                send_idle_state(idle_queue, "awake")
 
                 stream.stop_stream()
                 stream.close()
@@ -388,14 +394,14 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
                 # ── Listen ────────────────────────────────────────────────────
                 send_eye_state(eye_queue, "listen")
                 send_servo_state(servo_queue, "listen")
-                send_idle_state(idle_queue, "busy")    # pause idle during listen
+                send_idle_state(idle_queue, "busy")
 
                 audio_path = record_with_vad()
 
                 if not audio_path:
                     print("Eve: ...")
                     send_eye_state(eye_queue, "idle")
-                    send_idle_state(idle_queue, "reset")  # back to idle anims
+                    send_idle_state(idle_queue, "reset")
                 else:
                     user_text_input = transcribe_audio(audio_path)
                     print(f"You said: {user_text_input}")
@@ -413,13 +419,18 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
 
-                        # ── Emotion animation ─────────────────────────────────
+                        # ── Wall-E sound ──────────────────────────────────────
+                        if contains_walle(user_text_input) or contains_walle(llm_response):
+                            send_idle_state(idle_queue, "walle")
+
+                        # ── Emotion animation + sound ─────────────────────────
                         emotion = parse_emotion(llm_response)
                         if emotion:
                             send_servo_state(servo_queue, f"emotion:{emotion}")
+                            send_idle_state(idle_queue, f"emotion:{emotion}")
 
                         generate_tts_response(llm_response, OUTPUT_PATH)
-                        # play_audio(OUTPUT_PATH)  # uncomment when speaker wired
+                        play_audio(OUTPUT_PATH) # temporarily use onn speaker
 
                         # back to idle — arms stay extended, idle anims resume
                         send_eye_state(eye_queue, "idle")
@@ -441,6 +452,7 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
 
     except KeyboardInterrupt:
         print("\nEVE voice offline.")
+        send_idle_state(idle_queue, "powerdown")
     finally:
         stream.stop_stream()
         stream.close()

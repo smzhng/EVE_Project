@@ -9,12 +9,6 @@ Servo layout:
     Channel 4  → Arms extend/retract from torso
     Channel 8  → Left arm up/down (mirrored)
     Channel 12 → Head left/right
-
-Run standalone:
-    python3 servo_controller.py
-
-Run together:
-    sudo python3 main.py
 """
 
 import time
@@ -65,7 +59,7 @@ class ServoController:
         self._set(CH_LEFT_ARM,  mirror(ARM_DOWN))
         self._set(CH_EXTEND,    EXTEND_IN)
         self._set(CH_HEAD,      HEAD_CENTER)
-        print("Servos initialized — arms retracted, head center.")
+        print("Servos initialized.")
 
     def _set(self, channel, angle):
         angle = max(0, min(180, angle))
@@ -90,8 +84,8 @@ class ServoController:
                         steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
         threads = []
         if arm is not None:
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm,          steps, delay)))
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm),  steps, delay)))
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm,         steps, delay)))
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm), steps, delay)))
         if extend is not None:
             threads.append(threading.Thread(target=self.smooth_move, args=(CH_EXTEND, extend, steps, delay)))
         if head is not None:
@@ -164,11 +158,36 @@ class ServoController:
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=35, delay=0.04)
 
     def idle_arm_wave(self):
-        """Slow gentle arm raise and lower."""
         print("[Servos] idle arm wave")
         self.smooth_move_arms(ARM_UP,   steps=40, delay=0.04)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_HALF, steps=40, delay=0.04)
+
+    def idle_complex(self):
+        """
+        Matches 0006.mp3 — head turns left, picks up something interesting,
+        then arms alternate up/down opposite each other, then both drop.
+        """
+        print("[Servos] idle complex")
+        # head turns to look at something
+        self.smooth_move(CH_HEAD, HEAD_LEFT, steps=15, delay=0.03)
+        time.sleep(0.3)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=10, delay=0.02)
+        time.sleep(0.2)
+
+        # arms alternate — right up while left down, then swap, 3 cycles
+        for _ in range(3):
+            t1 = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, ARM_UP,   10, 0.02))
+            t2 = threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(ARM_DOWN), 10, 0.02))
+            t1.start(); t2.start(); t1.join(); t2.join()
+            time.sleep(0.1)
+            t1 = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, ARM_DOWN, 10, 0.02))
+            t2 = threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(ARM_UP),   10, 0.02))
+            t1.start(); t2.start(); t1.join(); t2.join()
+            time.sleep(0.1)
+
+        # both arms drop back to half
+        self.smooth_move_arms(ARM_HALF, steps=15, delay=0.02)
 
     def play_emotion(self, emotion):
         emotion = emotion.lower().strip("[]")
@@ -191,25 +210,19 @@ def main(servo_queue=None):
     sc = ServoController()
 
     if servo_queue is None:
-        print("Running standalone animation test...")
+        print("Running standalone test...")
         time.sleep(1)
         sc.wake()
         time.sleep(1)
+        sc.idle_complex()
+        time.sleep(1)
         sc.happy()
-        time.sleep(1)
-        sc.suspicious()
-        time.sleep(1)
-        sc.idle_arm_wave()
-        time.sleep(1)
-        sc.idle_head_left()
-        time.sleep(1)
-        sc.idle_head_right()
         time.sleep(1)
         sc.rest()
         print("Done.")
         return
 
-    print("Servo controller ready, listening for states...")
+    print("Servo controller ready.")
 
     try:
         while True:
@@ -217,33 +230,21 @@ def main(servo_queue=None):
                 try:
                     state = servo_queue.get_nowait()
                     print(f"[Servos] received: {state}")
-                    if state == "wake":
-                        sc.wake()
-                    elif state == "listen":
-                        sc.listen()
-                    elif state == "think":
-                        sc.think()
-                    elif state == "idle":
-                        sc.rest()
-                    elif state == "happy":
-                        sc.happy()
-                    elif state == "suspicious":
-                        sc.suspicious()
-                    elif state == "hostile":
-                        sc.hostile()
-                    elif state == "alarmed":
-                        sc.alarmed()
-                    elif state == "idle_head_left":
-                        sc.idle_head_left()
-                    elif state == "idle_head_right":
-                        sc.idle_head_right()
-                    elif state == "idle_head_center":
-                        sc.idle_head_center()
-                    elif state == "idle_arm_wave":
-                        sc.idle_arm_wave()
+                    if state == "wake":           sc.wake()
+                    elif state == "listen":       sc.listen()
+                    elif state == "think":        sc.think()
+                    elif state == "idle":         sc.rest()
+                    elif state == "happy":        sc.happy()
+                    elif state == "suspicious":   sc.suspicious()
+                    elif state == "hostile":      sc.hostile()
+                    elif state == "alarmed":      sc.alarmed()
+                    elif state == "idle_head_left":   sc.idle_head_left()
+                    elif state == "idle_head_right":  sc.idle_head_right()
+                    elif state == "idle_head_center": sc.idle_head_center()
+                    elif state == "idle_arm_wave":    sc.idle_arm_wave()
+                    elif state == "idle_complex":     sc.idle_complex()
                     elif state.startswith("emotion:"):
-                        emotion = state.split(":", 1)[1]
-                        sc.play_emotion(emotion)
+                        sc.play_emotion(state.split(":", 1)[1])
                 except:
                     pass
             else:
