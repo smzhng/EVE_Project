@@ -217,7 +217,7 @@ class EveEyes:
         self.state = "idle"
         self.next_blink = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
 
-    def update(self, eye_queue=None, servo_queue=None):
+    def update(self, eye_queue=None, servo_queue=None, llm_queue=None):
         now = time.time()
 
         if eye_queue is not None and not eye_queue.empty():
@@ -235,6 +235,8 @@ class EveEyes:
                 self.blink_state = 0
                 if servo_queue is not None:
                     servo_queue.put("idle")  # retract arms
+                if llm_queue is not None:
+                    llm_queue.put("powerdown")
 
         # ── State rendering ───────────────────────────────────────────────────
         if self.state == "closed":
@@ -293,7 +295,7 @@ class EveEyes:
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def main(eye_queue=None, servo_queue=None):
+def main(eye_queue=None, servo_queue=None, llm_queue=None):
     print("Loading eye data from EveEye.h...")
     sclera, upper, lower = load_eye_data()
 
@@ -309,7 +311,7 @@ def main(eye_queue=None, servo_queue=None):
 
     try:
         while True:
-            eyes.update(eye_queue, servo_queue)
+            eyes.update(eye_queue, servo_queue, llm_queue)
     except KeyboardInterrupt:
         print("\nShutting down eyes...")
         black = np.zeros((SCREEN_H, SCREEN_W, 3), dtype=np.uint8)

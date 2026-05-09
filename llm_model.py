@@ -345,7 +345,7 @@ def play_audio(file_path):
 
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
-def main(eye_queue=None, servo_queue=None, idle_queue=None):
+def main(eye_queue=None, servo_queue=None, idle_queue=None, llm_queue=None):
     print("EVE voice pipeline online.")
     print(f"Say '{WAKE_WORD.replace('_', ' ')}' to activate Eve.")
     print("Press Ctrl+C to shut down.")
@@ -361,9 +361,18 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
         frames_per_buffer=OWW_NATIVE_CHUNK
     )
     trigger_count = 0
+    eve_awake     = False
 
     try:
         while True:
+            # check for powerdown signal from eye process
+            if llm_queue is not None and not llm_queue.empty():
+                try:
+                    msg = llm_queue.get_nowait()
+                    if msg == "powerdown":
+                        eve_awake = False
+                except:
+                    pass
             raw   = stream.read(OWW_NATIVE_CHUNK, exception_on_overflow=False)
             audio = resample_to_16k(raw)
 
@@ -385,7 +394,11 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None):
                 print(f"\nEve: Wake word detected!")
 
                 # ── Boot sound plays on first wake ────────────────────────────
-                send_idle_state(idle_queue, "boot")
+                if not eve_awake:
+                    send_idle_state(idle_queue, "boot")
+                    eve_awake = True
+                else:
+                    send_idle_state(idle_queue, "wake_sound")
 
                 # ── Wake — eyes open, arms extend ─────────────────────────────
                 send_eye_state(eye_queue, "wake")

@@ -158,8 +158,8 @@ class IdleManager:
                     play_sound(SND_POWERDOWN, block=True)
                 elif msg == "boot":
                     play_sound(SND_BOOT, block=False)
-                    time.sleep(0.5)
-                    play_sound(SND_POWERON, block=False)
+                elif msg == "wake_sound":
+                    play_sound(SND_POWERON, block=True)
             except:
                 pass
 

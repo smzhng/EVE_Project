@@ -8,6 +8,7 @@ Queues:
     eye_queue   → voice sends eye states, eye process reacts
     servo_queue → voice sends servo states, servo process reacts
     idle_queue  → idle manager sends idle animation triggers to eyes and servos
+    llm_queue   → eye process signals voice process (powerdown event)
 
 Run:
     sudo python3 main.py
@@ -20,14 +21,14 @@ import signal
 import sys
 
 
-def run_eyes(eye_queue, servo_queue):
+def run_eyes(eye_queue, servo_queue, llm_queue):
     import eve_eyes
-    eve_eyes.main(eye_queue, servo_queue)
+    eve_eyes.main(eye_queue, servo_queue, llm_queue)
 
 
-def run_voice(eye_queue, servo_queue, idle_queue):
+def run_voice(eye_queue, servo_queue, idle_queue, llm_queue):
     import llm_model
-    llm_model.main(eye_queue, servo_queue, idle_queue)
+    llm_model.main(eye_queue, servo_queue, idle_queue, llm_queue)
 
 
 def run_servos(servo_queue):
@@ -50,9 +51,9 @@ if __name__ == "__main__":
     eye_queue   = Queue()
     servo_queue = Queue()
     idle_queue  = Queue()  # voice tells idle manager when Eve is active/inactive
-
-    eye_process   = Process(target=run_eyes,   args=(eye_queue, servo_queue),              name="EVE-Eyes")
-    voice_process = Process(target=run_voice,  args=(eye_queue, servo_queue, idle_queue),  name="EVE-Voice")
+    llm_queue   = Queue()  # eye process → voice process (powerdown signal)
+    eye_process   = Process(target=run_eyes,  args=(eye_queue, servo_queue, llm_queue),             name="EVE-Eyes")
+    voice_process = Process(target=run_voice, args=(eye_queue, servo_queue, idle_queue, llm_queue),  name="EVE-Voice")
     servo_process = Process(target=run_servos, args=(servo_queue,),                        name="EVE-Servos")
     idle_process  = Process(target=run_idle,   args=(idle_queue, eye_queue, servo_queue),  name="EVE-Idle")
 
