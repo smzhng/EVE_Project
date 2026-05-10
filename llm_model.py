@@ -325,12 +325,17 @@ def transcribe_audio(audio_path):
 
 def generate_tts_response(LLM_text_response, output_file_path):
     voice = PiperVoice.load(TTS_MODEL_PATH)
+    sample_rate    = 22050
+    silence_frames = int(sample_rate * 1.5)
+    silence        = struct.pack('<' + 'h' * silence_frames, *([0] * silence_frames))
+
     with wave.open(output_file_path, "wb") as wav_file:
-        voice.synthesize_wav(LLM_text_response, wav_file)
-        sample_rate    = 22050
-        silence_frames = int(sample_rate * 0.5)
-        silence        = struct.pack('<' + 'h' * silence_frames, *([0] * silence_frames))
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
         wav_file.writeframes(silence)
+        voice.synthesize_wav(LLM_text_response, wav_file)
+
     return output_file_path
 
 
@@ -435,6 +440,7 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None, llm_queue=None):
 
                         llm_response = generate_LLM_response(user_text_input)
                         print(f"Eve: {llm_response}")
+                        tts_response = re.sub(r'\[.*?\]', '', llm_response).strip()
 
                         # ── Wall-E sound ──────────────────────────────────────
                         if contains_walle(user_text_input) or contains_walle(llm_response):
@@ -446,7 +452,7 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None, llm_queue=None):
                             send_servo_state(servo_queue, f"emotion:{emotion}")
                             send_idle_state(idle_queue, f"emotion:{emotion}")
 
-                        generate_tts_response(llm_response, OUTPUT_PATH)
+                        generate_tts_response(tts_response, OUTPUT_PATH)
                         play_audio(OUTPUT_PATH)
 
                         # back to idle — arms stay extended, idle anims resume
