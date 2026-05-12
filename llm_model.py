@@ -397,9 +397,9 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None, llm_queue=None):
                 score      = prediction.get(WAKE_WORD, 0)
                 if score >= WAKE_THRESHOLD:
                     trigger_count += 1
-                    if VERBOSE: print(f"[OWW] score={score:.3f} hit={trigger_count}/{REQUIRED_HITS}")
+                    print(f"[OWW] score={score:.3f} hit={trigger_count}/{REQUIRED_HITS}")
                 else:
-                    if VERBOSE and score > 0.1:
+                    if score > 0.1:
                         print(f"[OWW] score={score:.3f} (below threshold)")
                     trigger_count = 0
 
