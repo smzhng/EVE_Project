@@ -35,6 +35,7 @@ HEAD_RIGHT   = 160
 
 SMOOTH_STEPS = 20
 SMOOTH_DELAY = 0.02
+VERBOSE      = False   # set to True to show [Servos] debug messages
 
 def mirror(angle):
     return 180 - angle
@@ -96,7 +97,7 @@ class ServoController:
     # ── MAIN ANIMATIONS ───────────────────────────────────────────────────────
 
     def wake(self):
-        print("[Servos] wake")
+        if VERBOSE: print("[Servos] wake")
         self.smooth_move(CH_EXTEND, EXTEND_OUT, steps=25, delay=0.02)
         self.arms_extended = True
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=8, delay=0.01)
@@ -105,28 +106,28 @@ class ServoController:
         self.smooth_move_arms(ARM_HALF, steps=15, delay=0.02)
 
     def listen(self):
-        print("[Servos] listen")
+        if VERBOSE: print("[Servos] listen")
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=10, delay=0.02)
 
     def think(self):
-        print("[Servos] think")
+        if VERBOSE: print("[Servos] think")
         self.smooth_move(CH_HEAD, HEAD_LEFT, steps=30, delay=0.03)
 
     def rest(self):
-        print("[Servos] rest")
+        if VERBOSE: print("[Servos] rest")
         self.smooth_move_arms(ARM_DOWN, steps=20, delay=0.02)
         self.smooth_move(CH_EXTEND, EXTEND_IN, steps=25, delay=0.02)
         self.arms_extended = False
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=15, delay=0.02)
 
     def happy(self):
-        print("[Servos] happy")
+        if VERBOSE: print("[Servos] happy")
         self.smooth_move_arms(ARM_UP, steps=15, delay=0.015)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_HALF, steps=15, delay=0.02)
 
     def suspicious(self):
-        print("[Servos] suspicious")
+        if VERBOSE: print("[Servos] suspicious")
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=12, delay=0.02)
         time.sleep(0.3)
         self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=12, delay=0.02)
@@ -134,11 +135,11 @@ class ServoController:
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=12, delay=0.02)
 
     def hostile(self):
-        print("[Servos] hostile")
+        if VERBOSE: print("[Servos] hostile")
         self.smooth_move_arms(ARM_UP, steps=8, delay=0.01)
 
     def alarmed(self):
-        print("[Servos] alarmed")
+        if VERBOSE: print("[Servos] alarmed")
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=6, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=6, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=6, delay=0.01)
@@ -146,19 +147,19 @@ class ServoController:
     # ── IDLE ANIMATIONS ───────────────────────────────────────────────────────
 
     def idle_head_left(self):
-        print("[Servos] idle head left")
+        if VERBOSE: print("[Servos] idle head left")
         self.smooth_move(CH_HEAD, HEAD_LEFT, steps=35, delay=0.04)
 
     def idle_head_right(self):
-        print("[Servos] idle head right")
+        if VERBOSE: print("[Servos] idle head right")
         self.smooth_move(CH_HEAD, HEAD_RIGHT, steps=35, delay=0.04)
 
     def idle_head_center(self):
-        print("[Servos] idle head center")
+        if VERBOSE: print("[Servos] idle head center")
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=35, delay=0.04)
 
     def idle_arm_wave(self):
-        print("[Servos] idle arm wave")
+        if VERBOSE: print("[Servos] idle arm wave")
         self.smooth_move_arms(ARM_UP,   steps=40, delay=0.04)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_HALF, steps=40, delay=0.04)
@@ -168,7 +169,7 @@ class ServoController:
         Matches 0006.mp3 — head turns left, picks up something interesting,
         then arms alternate up/down opposite each other, then both drop.
         """
-        print("[Servos] idle complex")
+        if VERBOSE: print("[Servos] idle complex")
         # head turns to look at something
         self.smooth_move(CH_HEAD, HEAD_LEFT, steps=15, delay=0.03)
         time.sleep(0.3)
@@ -229,7 +230,7 @@ def main(servo_queue=None):
             if not servo_queue.empty():
                 try:
                     state = servo_queue.get_nowait()
-                    print(f"[Servos] received: {state}")
+                    if VERBOSE: print(f"[Servos] received: {state}")
                     if state == "wake":           sc.wake()
                     elif state == "listen":       sc.listen()
                     elif state == "think":        sc.think()

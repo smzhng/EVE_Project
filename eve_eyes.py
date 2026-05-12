@@ -35,6 +35,7 @@ PIN_RST   = 27
 BLINK_INTERVAL_MIN  = 3.0
 BLINK_INTERVAL_MAX  = 7.0
 FRAME_DELAY         = 0.04
+VERBOSE             = False   # set to True to show [Eyes] debug messages
 POWERDOWN_TIMEOUT   = 600.0   # 10 minutes
 
 LAPTOP_MODE = os.environ.get('EVE_LAPTOP_MODE') == '1'
@@ -160,21 +161,21 @@ class EveEyes:
             self.last_active = time.time()
         if state == "wake":
             self.blink_state = 0
-            print("[Eyes] state → wake")
+            if VERBOSE: print("[Eyes] state → wake")
         elif state == "listen":
             self.blink_state = 0
-            print("[Eyes] state → listen")
+            if VERBOSE: print("[Eyes] state → listen")
         elif state == "think":
             self.blink_state = 0
-            print("[Eyes] state → think")
+            if VERBOSE: print("[Eyes] state → think")
         elif state == "idle":
             self.next_blink = time.time() + random.uniform(BLINK_INTERVAL_MIN, BLINK_INTERVAL_MAX)
-            print("[Eyes] state → idle")
+            if VERBOSE: print("[Eyes] state → idle")
         elif state == "idle_look":
-            print("[Eyes] state → idle_look")
+            if VERBOSE: print("[Eyes] state → idle_look")
         elif state == "closed":
             self.blink_state = 0
-            print("[Eyes] state → closed")
+            if VERBOSE: print("[Eyes] state → closed")
 
     def _show_frame(self, uT, lT, x_offset=0):
         frame_left  = render_eye(self.sclera, self.upper, self.lower, lT, uT, y_offset=-EYE_Y_OFFSET, x_offset=-x_offset, flip_v=True)
@@ -230,7 +231,7 @@ class EveEyes:
         # power down after 10 minutes
         if self.state == "idle" and self.last_active is not None:
             if now - self.last_active > POWERDOWN_TIMEOUT:
-                print("[Eyes] 10min inactivity → power down")
+                if VERBOSE: print("[Eyes] 10min inactivity → power down")
                 self.state = "closed"
                 self.blink_state = 0
                 if servo_queue is not None:

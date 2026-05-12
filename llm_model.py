@@ -69,6 +69,7 @@ WAKE_WORD          = "hey_jarvis"   # switch to "okay_eve" when model is reliabl
 WAKE_THRESHOLD     = 0.5
 REQUIRED_HITS      = 5
 NOISE_GATE         = 0
+VERBOSE            = False   # set to True to show [OWW] debug messages
 
 # ── VAD config ────────────────────────────────────────────────────────────────
 VAD_MODE           = 3
@@ -396,9 +397,9 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None, llm_queue=None):
                 score      = prediction.get(WAKE_WORD, 0)
                 if score >= WAKE_THRESHOLD:
                     trigger_count += 1
-                    print(f"[OWW] score={score:.3f} hit={trigger_count}/{REQUIRED_HITS}")
+                    if VERBOSE: print(f"[OWW] score={score:.3f} hit={trigger_count}/{REQUIRED_HITS}")
                 else:
-                    if score > 0.1:
+                    if VERBOSE and score > 0.1:
                         print(f"[OWW] score={score:.3f} (below threshold)")
                     trigger_count = 0
 

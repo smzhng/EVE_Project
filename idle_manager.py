@@ -32,6 +32,7 @@ IDLE_ANIM_MIN     = 5.0
 IDLE_ANIM_MAX     = 15.0
 POWERDOWN_TIMEOUT = 600.0   # 10 minutes
 SOUNDS_DIR        = "sounds"
+VERBOSE           = False   # set to True to show [Idle] debug messages
 
 # Named sound files
 SND_POWERDOWN   = "0001.mp3"
@@ -90,7 +91,7 @@ class IdleManager:
             "ambient",
         ])
 
-        print(f"[Idle] animation: {anim}")
+        if VERBOSE: print(f"[Idle] animation: {anim}")
 
         if anim == "head_left":
             play_sound(SND_MECHANICAL)
@@ -141,14 +142,14 @@ class IdleManager:
                     self.powered_down = False
                     self.last_active  = time.time()
                     self.next_anim    = time.time() + random.uniform(IDLE_ANIM_MIN, IDLE_ANIM_MAX)
-                    print("[Idle] state → awake")
+                    if VERBOSE: print("[Idle] state → awake")
                 elif msg == "busy":
                     self.busy = True
-                    print("[Idle] state → busy")
+                    if VERBOSE: print("[Idle] state → busy")
                 elif msg == "reset":
                     self.last_active = time.time()
                     self.busy        = False
-                    print("[Idle] activity reset")
+                    if VERBOSE: print("[Idle] activity reset")
                 elif msg.startswith("emotion:"):
                     emotion = msg.split(":", 1)[1]
                     self.trigger_emotion_sound(emotion)
@@ -172,7 +173,7 @@ class IdleManager:
 
         # 10 minute inactivity → power down
         if self.last_active is not None and (now - self.last_active) > POWERDOWN_TIMEOUT:
-            print("[Idle] 10 min inactivity → power down")
+            if VERBOSE: print("[Idle] 10 min inactivity → power down")
             play_sound(SND_POWERDOWN)
             self.send_eye("closed")
             self.send_servo("idle")
