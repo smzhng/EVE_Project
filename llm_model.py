@@ -324,17 +324,25 @@ def transcribe_audio(audio_path):
 
 
 def generate_tts_response(LLM_text_response, output_file_path):
+    import tempfile, os
     voice = PiperVoice.load(TTS_MODEL_PATH)
-    sample_rate    = 22050
-    silence_frames = int(sample_rate * 1.5)
+
+    tmp_path = output_file_path + ".tmp.wav"
+    with wave.open(tmp_path, "wb") as tmp_wav:
+        voice.synthesize_wav(LLM_text_response, tmp_wav)
+
+    with wave.open(tmp_path, "rb") as tmp_wav:
+        params      = tmp_wav.getparams()
+        speech_data = tmp_wav.readframes(tmp_wav.getnframes())
+    os.remove(tmp_path)
+
+    silence_frames = int(params.framerate * 1.5)
     silence        = struct.pack('<' + 'h' * silence_frames, *([0] * silence_frames))
 
     with wave.open(output_file_path, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(sample_rate)
+        wav_file.setparams(params)
         wav_file.writeframes(silence)
-        voice.synthesize_wav(LLM_text_response, wav_file)
+        wav_file.writeframes(speech_data)
 
     return output_file_path
 
