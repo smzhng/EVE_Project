@@ -24,8 +24,8 @@ CH_HEAD      = 12
 PULSE_MIN    = 500
 PULSE_MAX    = 2500
 
-ARM_DOWN     = 0
-ARM_UP       = 180
+ARM_DOWN     = 180
+ARM_UP       = 0
 ARM_HALF     = 90
 EXTEND_IN    = 0
 EXTEND_OUT   = 180
