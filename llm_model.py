@@ -66,7 +66,7 @@ NATIVE_RATE        = 44100
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 WAKE_WORD          = "hey_jarvis"   # switch to "okay_eve" when model is reliable
-WAKE_THRESHOLD     = 0.5
+WAKE_THRESHOLD     = 0.1
 REQUIRED_HITS      = 5
 NOISE_GATE         = 0
 VERBOSE            = False   # set to True to show [OWW] debug messages
