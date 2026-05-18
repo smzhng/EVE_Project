@@ -11,10 +11,12 @@ Servo layout:
     Channel 12 → Head left/right
 
 Arm positions (physical):
-    ARM_DOWN  = arms at sides (default when extended)
+    ARM_DOWN   = arms at sides (default when extended)
     ARM_RAISED = arms slightly raised (gentle animations)
     ARM_FRONT  = arms horizontal out front (happy, excited)
     ARM_UP     = arms above head (hostile, alarmed only)
+
+Right arm is offset by -23 degrees due to gear tooth alignment.
 """
 
 import time
@@ -40,12 +42,17 @@ HEAD_LEFT    = 20
 HEAD_CENTER  = 90
 HEAD_RIGHT   = 160
 
-SMOOTH_STEPS = 20
-SMOOTH_DELAY = 0.02
-VERBOSE      = False   # set to True to show [Servos] debug messages
+SMOOTH_STEPS     = 20
+SMOOTH_DELAY     = 0.02
+RIGHT_ARM_OFFSET = -23   # right arm gear is 23 degrees off — brings down to 157
+VERBOSE          = False  # set to True to show [Servos] debug messages
 
 def mirror(angle):
     return 180 - angle
+
+def right(angle):
+    """Apply offset to right arm angle to compensate for gear tooth alignment."""
+    return max(0, min(180, angle + RIGHT_ARM_OFFSET))
 
 
 # ── SERVO CONTROLLER ──────────────────────────────────────────────────────────
@@ -56,14 +63,14 @@ class ServoController:
             self.kit.servo[ch].set_pulse_width_range(PULSE_MIN, PULSE_MAX)
 
         self.angles = {
-            CH_RIGHT_ARM: ARM_DOWN,
+            CH_RIGHT_ARM: right(ARM_DOWN),
             CH_EXTEND:    EXTEND_IN,
             CH_LEFT_ARM:  mirror(ARM_DOWN),
             CH_HEAD:      HEAD_CENTER,
         }
         self.arms_extended = False
 
-        self._set(CH_RIGHT_ARM, ARM_DOWN)
+        self._set(CH_RIGHT_ARM, right(ARM_DOWN))
         self._set(CH_LEFT_ARM,  mirror(ARM_DOWN))
         self._set(CH_EXTEND,    EXTEND_IN)
         self._set(CH_HEAD,      HEAD_CENTER)
@@ -83,7 +90,7 @@ class ServoController:
             time.sleep(delay)
 
     def smooth_move_arms(self, arm_angle, steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
-        t_right = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm_angle,         steps, delay))
+        t_right = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, right(arm_angle),  steps, delay))
         t_left  = threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm_angle), steps, delay))
         t_right.start(); t_left.start()
         t_right.join();  t_left.join()
@@ -92,7 +99,7 @@ class ServoController:
                         steps=SMOOTH_STEPS, delay=SMOOTH_DELAY):
         threads = []
         if arm is not None:
-            threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, arm,         steps, delay)))
+            threads.append(threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, right(arm),  steps, delay)))
             threads.append(threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(arm), steps, delay)))
         if extend is not None:
             threads.append(threading.Thread(target=self.smooth_move, args=(CH_EXTEND, extend, steps, delay)))
@@ -105,7 +112,6 @@ class ServoController:
 
     def wake(self):
         if VERBOSE: print("[Servos] wake")
-        # extend arms, head shake — arms stay down
         self.smooth_move(CH_EXTEND, EXTEND_OUT, steps=25, delay=0.02)
         self.arms_extended = True
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=8, delay=0.01)
@@ -122,7 +128,6 @@ class ServoController:
 
     def rest(self):
         if VERBOSE: print("[Servos] rest")
-        # lower arms first then retract
         self.smooth_move_arms(ARM_DOWN, steps=20, delay=0.02)
         self.smooth_move(CH_EXTEND, EXTEND_IN, steps=25, delay=0.02)
         self.arms_extended = False
@@ -130,14 +135,12 @@ class ServoController:
 
     def happy(self):
         if VERBOSE: print("[Servos] happy")
-        # raise to front level then back down
         self.smooth_move_arms(ARM_FRONT, steps=15, delay=0.015)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_DOWN, steps=15, delay=0.02)
 
     def suspicious(self):
         if VERBOSE: print("[Servos] suspicious")
-        # head scan, arms stay down
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=12, delay=0.02)
         time.sleep(0.3)
         self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=12, delay=0.02)
@@ -146,14 +149,12 @@ class ServoController:
 
     def hostile(self):
         if VERBOSE: print("[Servos] hostile")
-        # arms above head — aggressive
         self.smooth_move_arms(ARM_UP, steps=8, delay=0.01)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_DOWN, steps=8, delay=0.02)
 
     def alarmed(self):
         if VERBOSE: print("[Servos] alarmed")
-        # fast head scan + arms briefly raise
         self.smooth_move_arms(ARM_RAISED, steps=6, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=6, delay=0.01)
         self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=6, delay=0.01)
@@ -176,24 +177,22 @@ class ServoController:
 
     def idle_arm_wave(self):
         if VERBOSE: print("[Servos] idle arm wave")
-        # gentle raise to slightly raised, not above head
         self.smooth_move_arms(ARM_RAISED, steps=40, delay=0.04)
         time.sleep(0.3)
         self.smooth_move_arms(ARM_DOWN, steps=40, delay=0.04)
 
     def idle_complex(self):
         if VERBOSE: print("[Servos] idle complex")
-        # head turns, arms alternate to front level
         self.smooth_move(CH_HEAD, HEAD_LEFT, steps=15, delay=0.03)
         time.sleep(0.3)
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=10, delay=0.02)
         time.sleep(0.2)
         for _ in range(3):
-            t1 = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, ARM_FRONT,         10, 0.02))
+            t1 = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, right(ARM_FRONT),  10, 0.02))
             t2 = threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(ARM_DOWN),  10, 0.02))
             t1.start(); t2.start(); t1.join(); t2.join()
             time.sleep(0.1)
-            t1 = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, ARM_DOWN,          10, 0.02))
+            t1 = threading.Thread(target=self.smooth_move, args=(CH_RIGHT_ARM, right(ARM_DOWN),   10, 0.02))
             t2 = threading.Thread(target=self.smooth_move, args=(CH_LEFT_ARM,  mirror(ARM_FRONT), 10, 0.02))
             t1.start(); t2.start(); t1.join(); t2.join()
             time.sleep(0.1)
