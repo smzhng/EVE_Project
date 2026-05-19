@@ -133,6 +133,17 @@ def send_idle_state(idle_queue, state):
     if idle_queue is not None:
         idle_queue.put(state)
 
+def commanded_shutdown(text):
+    text = text.lower().strip()
+    shutdown_phrases = [
+        "shut down", "shutdown", "power off", "turn off",
+        "go to sleep", "sleep", "shut yourself down",
+        "power down", "turn yourself off"
+    ]
+    if len(text.split()) <= 5:
+        return any(phrase in text for phrase in shutdown_phrases)
+    return False
+
 
 # ── 1. CREATE EVE LLM ─────────────────────────────────────────────────────────
 try:
@@ -461,31 +472,49 @@ def main(eye_queue=None, servo_queue=None, idle_queue=None, llm_queue=None):
                         send_eye_state(eye_queue, "idle")
                         send_idle_state(idle_queue, "reset")
                     else:
-                        # ── Think ─────────────────────────────────────────────
-                        send_eye_state(eye_queue, "think")
-                        send_servo_state(servo_queue, "think")
-                        send_idle_state(idle_queue, "busy")
+                        # ── Gesture check ─────────────────────────────────────
+                        gesture = parse_gesture(user_text_input)
+                        if gesture:
+                            send_servo_state(servo_queue, f"gesture:{gesture}")
 
-                        llm_response = generate_LLM_response(user_text_input)
-                        print(f"Eve: {llm_response}")
-                        tts_response = re.sub(r'\[.*?\]', '', llm_response).strip()
+                        # ── Music request ─────────────────────────────────────
+                        if contains_music_request(user_text_input):
+                            send_idle_state(idle_queue, "play_music")
+                            send_eye_state(eye_queue, "idle")
+                            send_idle_state(idle_queue, "reset")
 
-                        # ── Wall-E sound ──────────────────────────────────────
-                        if contains_walle(user_text_input) or contains_walle(llm_response):
-                            send_idle_state(idle_queue, "walle")
+                        # ── Shutdown command ──────────────────────────────────
+                        elif commanded_shutdown(user_text_input):
+                            print("Eve: Shutting down...")
+                            send_eye_state(eye_queue, "closed")
+                            send_servo_state(servo_queue, "idle")
+                            send_idle_state(idle_queue, "powerdown")
+                            eve_awake = False
+                        else:
+                            # ── Think ─────────────────────────────────────────
+                            send_eye_state(eye_queue, "think")
+                            send_servo_state(servo_queue, "think")
+                            send_idle_state(idle_queue, "busy")
 
-                        # ── Emotion animation + sound ─────────────────────────
-                        emotion = parse_emotion(llm_response)
-                        if emotion:
-                            send_servo_state(servo_queue, f"emotion:{emotion}")
-                            send_idle_state(idle_queue, f"emotion:{emotion}")
+                            llm_response = generate_LLM_response(user_text_input)
+                            print(f"Eve: {llm_response}")
+                            tts_response = re.sub(r'\[.*?\]', '', llm_response).strip()
+                            if not tts_response:
+                                tts_response = "..."
 
-                        generate_tts_response(tts_response, OUTPUT_PATH)
-                        play_audio(OUTPUT_PATH)
+                            if contains_walle(user_text_input) or contains_walle(llm_response):
+                                send_idle_state(idle_queue, "walle")
 
-                        # back to idle — arms stay extended, idle anims resume
-                        send_eye_state(eye_queue, "idle")
-                        send_idle_state(idle_queue, "reset")
+                            emotion = parse_emotion(llm_response)
+                            if emotion:
+                                send_servo_state(servo_queue, f"emotion:{emotion}")
+                                send_idle_state(idle_queue, f"emotion:{emotion}")
+
+                            generate_tts_response(tts_response, OUTPUT_PATH)
+                            play_audio(OUTPUT_PATH)
+
+                            send_eye_state(eye_queue, "idle")
+                            send_idle_state(idle_queue, "reset")
 
                 # ── Reopen OWW stream ─────────────────────────────────────────
                 stream = pa.open(
