@@ -15,11 +15,18 @@ Sound mapping:
     0008.mp3 → confused/uncertain
     0009.mp3 → random idle ambient
     0010.mp3 → Wall-E call
+    sunday_clothes.mp3 → Put On Your Sunday Clothes (dance song)
 
 Idle states received from voice pipeline (idle_queue):
-    "awake"  → start idle animations
-    "busy"   → pause idle animations
-    "reset"  → reset inactivity timer
+    "awake"      → start idle animations
+    "busy"       → pause idle animations
+    "reset"      → reset inactivity timer
+    "boot"       → play 0007.mp3 (first wake)
+    "wake_sound" → play 0002.mp3 (subsequent wakes)
+    "powerdown"  → play 0001.mp3
+    "walle"      → play 0010.mp3
+    "play_music" → play Put On Your Sunday Clothes
+    "emotion:X"  → play matching sound
 """
 
 import time
@@ -34,7 +41,6 @@ POWERDOWN_TIMEOUT = 600.0   # 10 minutes
 SOUNDS_DIR        = "sounds"
 VERBOSE           = False   # set to True to show [Idle] debug messages
 
-# Named sound files
 SND_POWERDOWN   = "0001.mp3"
 SND_POWERON     = "0002.mp3"
 SND_CURIOUS     = "0003.mp3"
@@ -45,17 +51,20 @@ SND_BOOT        = "0007.mp3"
 SND_CONFUSED    = "0008.mp3"
 SND_AMBIENT     = "0009.mp3"
 SND_WALLE       = "0010.mp3"
+SND_MUSIC       = "Hello Dolly - Put on Your Sunday Clothes.mp3"
 
 
 def play_sound(filename, block=False):
-    """Play a sound file. Non-blocking by default."""
     path = os.path.join(SOUNDS_DIR, filename)
     if not os.path.exists(path):
-        return
+        print(f"[Idle] sound not found: {path}")
+        return None
     if block:
         subprocess.run(["mpg123", "-q", path])
+        return None
     else:
-        subprocess.Popen(["mpg123", "-q", path])
+        proc = subprocess.Popen(["mpg123", "-q", path])
+        return proc
 
 
 # ── IDLE MANAGER ──────────────────────────────────────────────────────────────
@@ -80,48 +89,33 @@ class IdleManager:
             self.servo_queue.put(state)
 
     def play_idle_animation(self):
-        """Pick a random idle animation with matching sound."""
         anim = random.choice([
-            "head_left",
-            "head_right",
-            "head_center",
-            "eye_look",
-            "arm_wave",
-            "complex",
-            "ambient",
+            "head_left", "head_right", "head_center",
+            "eye_look", "arm_wave", "complex", "ambient",
         ])
-
         if VERBOSE: print(f"[Idle] animation: {anim}")
 
         if anim == "head_left":
             play_sound(SND_MECHANICAL)
             self.send_servo("idle_head_left")
-
         elif anim == "head_right":
             play_sound(SND_MECHANICAL)
             self.send_servo("idle_head_right")
-
         elif anim == "head_center":
             self.send_servo("idle_head_center")
-
         elif anim == "arm_wave":
             play_sound(SND_MECHANICAL)
             self.send_servo("idle_arm_wave")
-
         elif anim == "eye_look":
             play_sound(SND_CURIOUS)
             self.send_eye("idle_look")
-
         elif anim == "complex":
-            # 0006 — head turn + alternating arms
             play_sound(SND_COMPLEX)
             self.send_servo("idle_complex")
-
         elif anim == "ambient":
             play_sound(SND_AMBIENT)
 
     def trigger_emotion_sound(self, emotion):
-        """Play sound matching LLM emotion tag."""
         emotion = emotion.lower().strip("[]")
         if emotion in ("happy", "excited"):
             play_sound(SND_HAPPY)
@@ -158,9 +152,14 @@ class IdleManager:
                 elif msg == "powerdown":
                     play_sound(SND_POWERDOWN, block=True)
                 elif msg == "boot":
-                    play_sound(SND_BOOT, block=False)
+                    play_sound(SND_BOOT, block=True)
                 elif msg == "wake_sound":
                     play_sound(SND_POWERON, block=True)
+                elif msg == "play_music":
+                    # play music and trigger dance animation simultaneously
+                    play_sound(SND_MUSIC, block=False)
+                    self.send_servo("dance")
+                    if VERBOSE: print("[Idle] playing music + dance")
             except:
                 pass
 
@@ -171,7 +170,6 @@ class IdleManager:
         if not self.awake or self.powered_down:
             return
 
-        # 10 minute inactivity → power down
         if self.last_active is not None and (now - self.last_active) > POWERDOWN_TIMEOUT:
             if VERBOSE: print("[Idle] 10 min inactivity → power down")
             play_sound(SND_POWERDOWN)
@@ -181,7 +179,6 @@ class IdleManager:
             self.powered_down = True
             return
 
-        # play idle animation on timer
         if not self.busy and self.next_anim is not None and now >= self.next_anim:
             self.play_idle_animation()
             self.next_anim = now + random.uniform(IDLE_ANIM_MIN, IDLE_ANIM_MAX)
@@ -190,7 +187,6 @@ class IdleManager:
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 def main(idle_queue=None, eye_queue=None, servo_queue=None):
     manager = IdleManager(idle_queue, eye_queue, servo_queue)
-
     try:
         while True:
             manager.update()

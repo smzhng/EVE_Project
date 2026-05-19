@@ -47,6 +47,10 @@ SMOOTH_DELAY     = 0.02
 RIGHT_ARM_OFFSET = -23   # right arm gear is 23 degrees off — brings down to 157
 VERBOSE          = False  # set to True to show [Servos] debug messages
 
+DANCE_BPM        = 94
+DANCE_BEAT       = 60 / DANCE_BPM        # 0.638s per beat
+DANCE_HALF_BEAT  = DANCE_BEAT / 2        # 0.319s
+
 def mirror(angle):
     return 180 - angle
 
@@ -112,6 +116,7 @@ class ServoController:
 
     def wake(self):
         if VERBOSE: print("[Servos] wake")
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=10, delay=0.02)  # face forward first
         self.smooth_move(CH_EXTEND, EXTEND_OUT, steps=25, delay=0.02)
         self.arms_extended = True
         self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=8, delay=0.01)
@@ -161,15 +166,118 @@ class ServoController:
         self.smooth_move(CH_HEAD, HEAD_CENTER, steps=6, delay=0.01)
         self.smooth_move_arms(ARM_DOWN, steps=10, delay=0.02)
 
+    # ── GESTURE ANIMATIONS ────────────────────────────────────────────────────
+
+    def play_gesture(self, gesture):
+        if VERBOSE: print(f"[Servos] gesture: {gesture}")
+        if gesture == "wave":
+            # wave right arm up and down twice
+            self.smooth_move(CH_RIGHT_ARM, right(ARM_FRONT), steps=12, delay=0.02)
+            time.sleep(0.15)
+            self.smooth_move(CH_RIGHT_ARM, right(ARM_RAISED), steps=8, delay=0.02)
+            time.sleep(0.15)
+            self.smooth_move(CH_RIGHT_ARM, right(ARM_FRONT), steps=8, delay=0.02)
+            time.sleep(0.15)
+            self.smooth_move(CH_RIGHT_ARM, right(ARM_RAISED), steps=8, delay=0.02)
+            time.sleep(0.15)
+            self.smooth_move(CH_RIGHT_ARM, right(ARM_DOWN), steps=12, delay=0.02)
+        elif gesture == "nod":
+            # head tilt left then back (EVE's version of nodding)
+            self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=8, delay=0.02)
+            time.sleep(0.2)
+            self.smooth_move(CH_HEAD, HEAD_CENTER, steps=8, delay=0.02)
+        elif gesture == "shake":
+            # head shake no
+            self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=6, delay=0.01)
+            self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=6, delay=0.01)
+            self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=6, delay=0.01)
+            self.smooth_move(CH_HEAD, HEAD_CENTER, steps=6, delay=0.01)
+        elif gesture == "look_around":
+            # curious scan
+            self.smooth_move(CH_HEAD, HEAD_LEFT,   steps=20, delay=0.03)
+            time.sleep(0.3)
+            self.smooth_move(CH_HEAD, HEAD_RIGHT,  steps=20, delay=0.03)
+            time.sleep(0.3)
+            self.smooth_move(CH_HEAD, HEAD_CENTER, steps=20, delay=0.03)
+        elif gesture == "shrug":
+            # both arms raise slightly then drop
+            self.smooth_move_arms(ARM_RAISED, steps=10, delay=0.02)
+            time.sleep(0.3)
+            self.smooth_move_arms(ARM_DOWN, steps=10, delay=0.02)
+
+    # ── DANCE ANIMATION ───────────────────────────────────────────────────────
+
+    def dance(self, duration=24.0):
+        """Dance to Put On Your Sunday Clothes — 94 BPM, synced head/arm moves."""
+        if VERBOSE: print("[Servos] dance start")
+        steps_per_beat = 6
+        delay_per_beat = DANCE_BEAT / steps_per_beat
+
+        end_time = time.time() + duration
+        beat = 0
+
+        while time.time() < end_time:
+            phase = beat % 8  # 8-beat cycle
+
+            if phase == 0:
+                # head left
+                t = threading.Thread(target=self.smooth_move,
+                    args=(CH_HEAD, HEAD_LEFT, steps_per_beat, delay_per_beat))
+                t.start(); t.join()
+            elif phase == 1:
+                # right arm up
+                t = threading.Thread(target=self.smooth_move,
+                    args=(CH_RIGHT_ARM, right(ARM_FRONT), steps_per_beat, delay_per_beat))
+                t.start(); t.join()
+            elif phase == 2:
+                # head right
+                t = threading.Thread(target=self.smooth_move,
+                    args=(CH_HEAD, HEAD_RIGHT, steps_per_beat, delay_per_beat))
+                t.start(); t.join()
+            elif phase == 3:
+                # left arm up, right arm down
+                t1 = threading.Thread(target=self.smooth_move,
+                    args=(CH_RIGHT_ARM, right(ARM_DOWN), steps_per_beat, delay_per_beat))
+                t2 = threading.Thread(target=self.smooth_move,
+                    args=(CH_LEFT_ARM, mirror(ARM_FRONT), steps_per_beat, delay_per_beat))
+                t1.start(); t2.start(); t1.join(); t2.join()
+            elif phase == 4:
+                # head left
+                t = threading.Thread(target=self.smooth_move,
+                    args=(CH_HEAD, HEAD_LEFT, steps_per_beat, delay_per_beat))
+                t.start(); t.join()
+            elif phase == 5:
+                # both arms front
+                self.smooth_move_arms(ARM_FRONT, steps=steps_per_beat, delay=delay_per_beat)
+            elif phase == 6:
+                # head right
+                t = threading.Thread(target=self.smooth_move,
+                    args=(CH_HEAD, HEAD_RIGHT, steps_per_beat, delay_per_beat))
+                t.start(); t.join()
+            elif phase == 7:
+                # both arms down
+                self.smooth_move_arms(ARM_DOWN, steps=steps_per_beat, delay=delay_per_beat)
+
+            beat += 1
+
+        # return to default
+        self.smooth_move_arms(ARM_DOWN, steps=20, delay=0.02)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=15, delay=0.02)
+        if VERBOSE: print("[Servos] dance end")
+
     # ── IDLE ANIMATIONS ───────────────────────────────────────────────────────
 
     def idle_head_left(self):
         if VERBOSE: print("[Servos] idle head left")
         self.smooth_move(CH_HEAD, HEAD_LEFT, steps=35, delay=0.04)
+        time.sleep(8.0)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=35, delay=0.04)
 
     def idle_head_right(self):
         if VERBOSE: print("[Servos] idle head right")
         self.smooth_move(CH_HEAD, HEAD_RIGHT, steps=35, delay=0.04)
+        time.sleep(8.0)
+        self.smooth_move(CH_HEAD, HEAD_CENTER, steps=35, delay=0.04)
 
     def idle_head_center(self):
         if VERBOSE: print("[Servos] idle head center")
@@ -223,13 +331,11 @@ def main(servo_queue=None):
         time.sleep(1)
         sc.wake()
         time.sleep(1)
-        sc.idle_arm_wave()
+        sc.play_gesture("wave")
         time.sleep(1)
-        sc.happy()
+        sc.play_gesture("nod")
         time.sleep(1)
-        sc.hostile()
-        time.sleep(1)
-        sc.idle_complex()
+        sc.dance(duration=10.0)
         time.sleep(1)
         sc.rest()
         print("Done.")
@@ -256,8 +362,11 @@ def main(servo_queue=None):
                     elif state == "idle_head_center": sc.idle_head_center()
                     elif state == "idle_arm_wave":    sc.idle_arm_wave()
                     elif state == "idle_complex":     sc.idle_complex()
+                    elif state == "dance":            sc.dance(duration=24.0)
                     elif state.startswith("emotion:"):
                         sc.play_emotion(state.split(":", 1)[1])
+                    elif state.startswith("gesture:"):
+                        sc.play_gesture(state.split(":", 1)[1])
                 except:
                     pass
             else:
