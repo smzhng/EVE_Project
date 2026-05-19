@@ -66,8 +66,8 @@ NATIVE_RATE        = 44100
 
 # ── Wake word config ──────────────────────────────────────────────────────────
 WAKE_WORD          = "okay_eve"   # custom trained wake word
-WAKE_THRESHOLD     = 0.5
-REQUIRED_HITS      = 5
+WAKE_THRESHOLD     = 0.3
+REQUIRED_HITS      = 3
 NOISE_GATE         = 0
 
 # ── VAD config ────────────────────────────────────────────────────────────────
